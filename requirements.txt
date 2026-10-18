@@ -1,0 +1,11 @@
+# Papercut desktop — build requirements (logical names; install via Qt installer / OS packages).
+# See README.md for platform-specific install notes.
+
+cmake>=3.22
+ninja>=1.10
+qt6>=6.8
+qt6-modules: Core, Gui, Sql, Network, Quick, QuickControls2, Qml
+cxx-standard: C++20
+compiler: GCC 11+ or Clang (Linux); MinGW matching Qt (Windows)
+git-unix-tools: required on Windows for MuPDF build (Git for Windows usr\bin on PATH)
+mupdf==1.28.0  # downloaded at configure time unless USE_SYSTEM_MUPDF=ON

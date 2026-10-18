@@ -1,0 +1,141 @@
+name: Desktop Release
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: write
+
+env:
+  QT_VERSION: "6.8.3"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_mingw
+          tools: tools_mingw1310
+          cache: true
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Add MinGW and Git Unix tools to PATH
+        shell: pwsh
+        run: |
+          $mingw = Get-ChildItem -Path "$env:IQTA_TOOLS" -Directory -Filter "mingw*" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($mingw) {
+            Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $mingw.FullName "bin")
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\Git\usr\bin"
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -TotalCount 1).Trim()
+          if (-not $v) { throw "VERSION file is empty" }
+          "version=$v" | Add-Content $env:GITHUB_OUTPUT
+          Write-Host "Parsed version=$v"
+
+      - name: Configure
+        run: cmake -S . -B Compile -G Ninja -DCMAKE_BUILD_TYPE=Release -DPAPERCUT_BUILD_GUI=ON
+
+      - name: Build
+        run: cmake --build Compile --parallel
+
+      - name: Zip Windows build
+        shell: pwsh
+        run: |
+          $zip = "Papercut-${{ steps.version.outputs.version }}-windows-x64.zip"
+          if (Test-Path $zip) { Remove-Item $zip }
+          Compress-Archive -Path "Release\Windows\*" -DestinationPath $zip
+          Write-Host "Created $zip"
+
+      - name: Upload Windows zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: Papercut-windows
+          path: Papercut-${{ steps.version.outputs.version }}-windows-x64.zip
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build build-essential make libgl1-mesa-dev libglu1-mesa-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libfreetype-dev \
+            libx11-dev libx11-xcb-dev libxcb-cursor-dev libxcb-icccm4-dev \
+            libxcb-image0-dev libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev \
+            libxcb-shape0-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          cache: true
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(head -n1 VERSION | tr -d '\r')
+          if [ -z "$VERSION" ]; then
+            echo "VERSION file is empty"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Parsed version=$VERSION"
+
+      - name: Configure
+        run: cmake -S . -B Compile -G Ninja -DCMAKE_BUILD_TYPE=Release -DPAPERCUT_BUILD_GUI=ON
+
+      - name: Build
+        run: cmake --build Compile --parallel
+
+      - name: Zip Linux build
+        run: cmake -E chdir Release/Linux cmake -E tar cf "$GITHUB_WORKSPACE/Papercut-${{ steps.version.outputs.version }}-linux-x64.zip" --format=zip .
+
+      - name: Upload Linux zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: Papercut-linux
+          path: Papercut-${{ steps.version.outputs.version }}-linux-x64.zip
+
+  github-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.windows.outputs.version }}
+          name: ${{ needs.windows.outputs.version }}
+          files: |
+            Papercut-windows/Papercut-${{ needs.windows.outputs.version }}-windows-x64.zip
+            Papercut-linux/Papercut-${{ needs.windows.outputs.version }}-linux-x64.zip
+          fail_on_unmatched_files: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

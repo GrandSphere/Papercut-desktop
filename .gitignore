@@ -1,0 +1,10 @@
+/Compile/
+/Release/
+/rule.md
+/sample README.md
+/.cursor/
+CMakeUserPresets.json
+.qt/
+*.user
+*.user.*
+.DS_Store
