@@ -29,11 +29,11 @@ PapercutOverlay {
             AppText { text: "Version: " + App.version; color: App.appFontColor; opacity: 0.7; font.pixelSize: Math.round(14 * App.uiScale); anchors.horizontalCenter: parent.horizontalCenter }
             Item { height: 16; width: 1 }
             AppText { text: "License:"; color: App.appFontColor; opacity: 0.7; font.pixelSize: Math.round(16 * App.uiScale) }
-            AboutLink { title: "GNU General Public License 3"; subtitle: "(GPLv3)"; url: "https://github.com/GrandSphere/papercut-desktop/blob/main/LICENSE" }
+            AboutLink { title: "GNU General Public License 3"; subtitle: "(GPLv3)"; url: "https://github.com/GrandSphere/Papercut-desktop/blob/main/LICENSE" }
             Item { height: 12; width: 1 }
             AppText { text: "Github:"; color: App.appFontColor; opacity: 0.7; font.pixelSize: Math.round(16 * App.uiScale) }
-            AboutLink { title: "Github Repository"; url: "https://github.com/GrandSphere/papercut-desktop" }
-            AboutLink { title: "Latest Release"; url: "https://github.com/GrandSphere/papercut-desktop/releases/latest" }
+            AboutLink { title: "Github Repository"; url: "https://github.com/GrandSphere/Papercut-desktop" }
+            AboutLink { title: "Latest Release"; url: "https://github.com/GrandSphere/Papercut-desktop/releases/latest" }
             Item { height: 12; width: 1 }
             AppText { text: "Donate:"; color: App.appFontColor; opacity: 0.7; font.pixelSize: Math.round(16 * App.uiScale) }
             AboutLink { title: "Ko-fi"; url: "https://ko-fi.com/grandspherestudios" }
