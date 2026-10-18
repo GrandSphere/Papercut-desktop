@@ -95,6 +95,10 @@ public:
     Q_INVOKABLE QUrl suggestedFile(const QString &name) const;
     Q_INVOKABLE bool revealFile(const QString &path) const;
     Q_INVOKABLE QString exportFileName(const QString &kind) const;
+    Q_INVOKABLE bool windowIsZoomed(QObject *window) const;
+    Q_INVOKABLE void clearNativeWindowZoom(QObject *window) const;
+    Q_INVOKABLE void unzoomWindowToGeometry(QObject *window, int x, int y, int w, int h) const;
+    Q_INVOKABLE void syncWindowPlacement(QObject *window) const;
 
 signals:
     void settingsChanged();

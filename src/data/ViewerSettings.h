@@ -3,6 +3,7 @@
 #include "ZoomMode.h"
 
 #include <QtGlobal>
+#include <algorithm>
 #include <QString>
 #include <QStringList>
 #include <optional>
@@ -19,6 +20,10 @@ struct ViewerSettings {
     static constexpr int DEFAULT_APP_FONT_WEIGHT = 500;
     static constexpr float MIN_FONT_SCALE = 0.3f;
     static constexpr float MAX_FONT_SCALE = 3.f;
+    static constexpr int DEFAULT_WINDOW_W = 1000;
+    static constexpr int DEFAULT_WINDOW_H = 760;
+    static constexpr int MIN_WINDOW_W = 360;
+    static constexpr int MIN_WINDOW_H = 480;
 
     int id = 1;
     int fgColor = DEFAULT_FG;
@@ -70,10 +75,30 @@ struct ViewerSettings {
     bool titleBarEnabled = true;
     int windowPaddingV = 0;
     int windowPaddingH = 0;
+    int defaultWindowWidth = DEFAULT_WINDOW_W;
+    int defaultWindowHeight = DEFAULT_WINDOW_H;
+    QString startupWindowPosition = QStringLiteral("CENTER");
     QString filesRoot;
     QString appIcon = QStringLiteral("papercut-dark-off");
     QString appFontFamily = QStringLiteral("Roboto");
     int appFontWeight = DEFAULT_APP_FONT_WEIGHT;
+
+    static int canonicalDefaultWindowWidth(int w) {
+        if (w < MIN_WINDOW_W) return DEFAULT_WINDOW_W;
+        return std::min(w, 16384);
+    }
+    static int canonicalDefaultWindowHeight(int h) {
+        if (h < MIN_WINDOW_H) return DEFAULT_WINDOW_H;
+        return std::min(h, 16384);
+    }
+
+    static QString canonicalStartupWindowPosition(QString id) {
+        static const QStringList kOk{QStringLiteral("CENTER"), QStringLiteral("SNAP_LEFT"),
+                                     QStringLiteral("SNAP_RIGHT"), QStringLiteral("MAXIMIZED"),
+                                     QStringLiteral("FULLSCREEN")};
+        const QString u = id.toUpper();
+        return kOk.contains(u) ? u : QStringLiteral("CENTER");
+    }
 
     static QString canonicalAppIcon(QString id) {
         if (id.endsWith(QLatin1String(".ico"), Qt::CaseInsensitive)) id.chop(4);
@@ -142,7 +167,10 @@ struct ViewerSettings {
                && allowMultipleInstances == o.allowMultipleInstances && lastFolioItemId == o.lastFolioItemId
                && fullScreenOnMaximize == o.fullScreenOnMaximize && centerHorizontally == o.centerHorizontally
                && titleBarEnabled == o.titleBarEnabled && windowPaddingV == o.windowPaddingV
-               && windowPaddingH == o.windowPaddingH && filesRoot == o.filesRoot && appIcon == o.appIcon
+               && windowPaddingH == o.windowPaddingH && defaultWindowWidth == o.defaultWindowWidth
+               && defaultWindowHeight == o.defaultWindowHeight
+               && startupWindowPosition == o.startupWindowPosition && filesRoot == o.filesRoot
+               && appIcon == o.appIcon
                && appFontFamily == o.appFontFamily && appFontWeight == o.appFontWeight;
     }
 

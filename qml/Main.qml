@@ -11,7 +11,7 @@ ApplicationWindow {
     height: 760
     minimumWidth: 360
     minimumHeight: 480
-    visible: true
+    visible: false
     title: chromeTitle
     color: App.bgColor
     flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowSystemMenuHint
@@ -40,8 +40,23 @@ ApplicationWindow {
     property bool leavingWindowed: false
     property real windowedX: x
     property real windowedY: y
-    property real windowedW: width
-    property real windowedH: height
+    function defaultWindowW() {
+        return Math.max(minimumWidth, App.settings.defaultWindowWidth || 1000)
+    }
+    function defaultWindowH() {
+        return Math.max(minimumHeight, App.settings.defaultWindowHeight || 760)
+    }
+    function applyConfiguredDefaultSize() {
+        if (windowZoomed()) return
+        width = defaultWindowW()
+        height = defaultWindowH()
+    }
+    property int normalSizeW: defaultWindowW()
+    property int normalSizeH: defaultWindowH()
+    property int lastSizeW: defaultWindowW()
+    property int lastSizeH: defaultWindowH()
+    property int zoomedRefW: 0
+    property int zoomedRefH: 0
     property bool shareStoreRotation: true
     readonly property int winPadV: Math.max(0, App.settings.windowPaddingV || 0)
     readonly property int winPadH: Math.max(0, App.settings.windowPaddingH || 0)
@@ -150,37 +165,112 @@ ApplicationWindow {
         saveCurrent()
         Qt.quit()
     }
+    function windowZoomed() {
+        return visibility === Window.Maximized || visibility === Window.FullScreen
+            || App.windowIsZoomed(win)
+    }
+    function syncNormalSize() {
+        if (restoringWindowed || leavingWindowed) return
+        if (windowZoomed()) return
+        normalSizeW = Math.round(width)
+        normalSizeH = Math.round(height)
+    }
+    function syncLastSize() {
+        if (restoringWindowed || leavingWindowed) return
+        const w = Math.round(width)
+        const h = Math.round(height)
+        if (windowZoomed()) {
+            zoomedRefW = w
+            zoomedRefH = h
+            return
+        }
+        if (zoomedRefW <= 0 || zoomedRefH <= 0) {
+            lastSizeW = w
+            lastSizeH = h
+            return
+        }
+        if (lastSizeW < zoomedRefW && lastSizeH < zoomedRefH) {
+            lastSizeW = w
+            lastSizeH = h
+        }
+    }
     function rememberWindowed() {
         if (restoringWindowed || leavingWindowed) return
-        if (visibility !== Window.Windowed) return
+        if (windowZoomed()) return
         if (width < minimumWidth || height < minimumHeight) return
         if (width >= Screen.width - 8 && height >= Screen.height - 8) return
         windowedX = x
         windowedY = y
-        windowedW = width
-        windowedH = height
+    }
+    function storedNormalW() {
+        return Math.max(lastSizeW, minimumWidth)
+    }
+    function storedNormalH() {
+        return Math.max(lastSizeH, minimumHeight)
+    }
+    function restoreForSystemDrag(globalX, globalY, pointerAnchor) {
+        if (restoringWindowed || !windowZoomed()) return false
+        const fracX = (globalX - x) / width
+        const nw = storedNormalW()
+        const nh = storedNormalH()
+        const offY = globalY - y
+        const newY = pointerAnchor ? globalY - ((globalY - y) / height) * nh : globalY - offY
+        const newX = globalX - fracX * nw
+        wantFullscreen = false
+        restoringWindowed = true
+        if (visibility === Window.FullScreen) {
+            App.clearNativeWindowZoom(win)
+            width = nw
+            height = nh
+            x = newX
+            y = newY
+        } else if (Qt.platform.os === "windows" && App.windowIsZoomed(win)) {
+            App.unzoomWindowToGeometry(win, newX, newY, nw, nh)
+        } else {
+            App.clearNativeWindowZoom(win)
+            width = nw
+            height = nh
+            x = newX
+            y = newY
+        }
+        Qt.callLater(function() { restoringWindowed = false })
+        return true
+    }
+    function beginSystemMoveFromZoomed(globalX, globalY, pointerAnchor) {
+        if (pointerAnchor === undefined) pointerAnchor = false
+        if (!windowZoomed()) {
+            startSystemMove()
+            return true
+        }
+        if (!restoreForSystemDrag(globalX, globalY, pointerAnchor)) return false
+        startSystemMove()
+        return true
     }
     function restoreWindowed() {
         wantFullscreen = false
         restoringWindowed = true
-        showNormal()
-        visibility = Window.Windowed
-        x = windowedX
-        y = windowedY
-        width = Math.max(windowedW, minimumWidth)
-        height = Math.max(windowedH, minimumHeight)
-        Qt.callLater(function() { restoringWindowed = false })
-    }
-    function beginSystemMove() {
-        if (visibility === Window.FullScreen || visibility === Window.Maximized) {
-            restoreWindowed()
-            moveAfterRestore.restart()
-            return
+        const nw = storedNormalW()
+        const nh = storedNormalH()
+        if (visibility === Window.FullScreen) {
+            App.clearNativeWindowZoom(win)
+            x = windowedX
+            y = windowedY
+            width = nw
+            height = nh
+        } else if (Qt.platform.os === "windows" && windowZoomed()) {
+            App.unzoomWindowToGeometry(win, windowedX, windowedY, nw, nh)
+        } else {
+            App.clearNativeWindowZoom(win)
+            x = windowedX
+            y = windowedY
+            width = nw
+            height = nh
         }
-        startSystemMove()
+        Qt.callLater(function() { restoringWindowed = false })
     }
     function enterMaximizedOrFullscreen() {
         rememberWindowed()
+        if (Qt.platform.os === "windows") App.syncWindowPlacement(win)
         leavingWindowed = true
         if (App.settings.fullScreenOnMaximize) {
             wantFullscreen = true
@@ -202,8 +292,14 @@ ApplicationWindow {
             Qt.callLater(function() { leavingWindowed = false })
         }
     }
+    function beginStartupFullscreen() {
+        leavingWindowed = true
+        wantFullscreen = true
+        showFullScreen()
+        Qt.callLater(function() { leavingWindowed = false })
+    }
     function toggleMaxRestore() {
-        if (visibility === Window.FullScreen || visibility === Window.Maximized)
+        if (windowZoomed())
             restoreWindowed()
         else
             enterMaximizedOrFullscreen()
@@ -334,6 +430,8 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        syncNormalSize()
+        syncLastSize()
         Keybinds.watchWindow(win)
         viewerCtl.strip = pageStrip
         if (Launch.file.length > 0) {
@@ -347,8 +445,16 @@ ApplicationWindow {
     onActiveChanged: if (!active) saveCurrent()
     onXChanged: rememberWindowed()
     onYChanged: rememberWindowed()
-    onWidthChanged: rememberWindowed()
-    onHeightChanged: rememberWindowed()
+    onWidthChanged: {
+        rememberWindowed()
+        syncNormalSize()
+        syncLastSize()
+    }
+    onHeightChanged: {
+        rememberWindowed()
+        syncNormalSize()
+        syncLastSize()
+    }
     onVisibilityChanged: {
         if (restoringWindowed) return
         if (visibility === Window.Maximized && App.settings.fullScreenOnMaximize) {
@@ -419,22 +525,6 @@ ApplicationWindow {
         onWheel: wheel => { drawer.close(); wheel.accepted = false }
     }
 
-    Timer {
-        id: moveAfterRestore
-        interval: 16
-        repeat: false
-        onTriggered: win.startSystemMove()
-    }
-    MouseArea {
-        z: 39
-        visible: win.isFullscreen
-        anchors.left: parent.left
-        anchors.right: parent.right
-        y: 0
-        height: 36
-        acceptedButtons: Qt.LeftButton
-        onPressed: win.beginSystemMove()
-    }
     TitleBar {
         id: titleBarItem
         visible: win.titleBarShown
@@ -449,7 +539,7 @@ ApplicationWindow {
     }
 
     Repeater {
-        model: Qt.platform.os === "windows" || win.isFullscreen || win.visibility === Window.Maximized ? [] : [
+        model: win.isFullscreen || win.windowZoomed() ? [] : [
             { e: Qt.LeftEdge, w: 6, h: 0, x: 0, y: 0, c: Qt.SizeHorCursor },
             { e: Qt.RightEdge, w: 6, h: 0, x: 1, y: 0, c: Qt.SizeHorCursor },
             { e: Qt.TopEdge, w: 0, h: 6, x: 0, y: 0, c: Qt.SizeVerCursor },

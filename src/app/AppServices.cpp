@@ -1,5 +1,6 @@
 #include "AppServices.h"
 
+#include "WinWindowChrome.h"
 #include "Version.h"
 #include "core/AppPaths.h"
 #include "data/BackupJson.h"
@@ -13,6 +14,7 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QWindow>
 #include <QHash>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -142,8 +144,9 @@ QString AppServices::tempDir() const { return AppPaths::temp().absolutePath(); }
     X(centerHorizontally) X(titleBarEnabled)
 #define PC_INTS(X) \
     X(pagePaddingDp) X(horizontalPagePaddingDp) X(lastPageIndex) X(windowPaddingV) X(windowPaddingH) \
-    X(appFontWeight)
-#define PC_STRINGS(X) X(zoomMode) X(startupZoomMode) X(filesRoot) X(appIcon) X(appFontFamily)
+    X(defaultWindowWidth) X(defaultWindowHeight) X(appFontWeight)
+#define PC_STRINGS(X) \
+    X(zoomMode) X(startupZoomMode) X(startupWindowPosition) X(filesRoot) X(appIcon) X(appFontFamily)
 
 QVariantMap AppServices::settingsMap() const {
     const ViewerSettings s = settings();
@@ -247,9 +250,18 @@ void AppServices::saveSettingsDraft(const QVariantMap &draft) {
         i("horizontalPagePaddingDp", next.horizontalPagePaddingDp);
         i("windowPaddingV", next.windowPaddingV);
         i("windowPaddingH", next.windowPaddingH);
+        if (draft.contains(QLatin1String("defaultWindowWidth")))
+            next.defaultWindowWidth =
+                ViewerSettings::canonicalDefaultWindowWidth(draft.value(QLatin1String("defaultWindowWidth")).toInt());
+        if (draft.contains(QLatin1String("defaultWindowHeight")))
+            next.defaultWindowHeight =
+                ViewerSettings::canonicalDefaultWindowHeight(draft.value(QLatin1String("defaultWindowHeight")).toInt());
         st("filesRoot", next.filesRoot);
         st("zoomMode", next.zoomMode);
         st("startupZoomMode", next.startupZoomMode);
+        st("startupWindowPosition", next.startupWindowPosition);
+        next.startupWindowPosition =
+            ViewerSettings::canonicalStartupWindowPosition(next.startupWindowPosition);
         st("appIcon", next.appIcon);
         next.appIcon = ViewerSettings::canonicalAppIcon(next.appIcon);
         st("appFontFamily", next.appFontFamily);
@@ -462,6 +474,22 @@ QString AppServices::exportFileName(const QString &kind) const {
 QStringList AppServices::openFilters() const {
     return {QStringLiteral("Documents (*.pdf *.epub *.xps *.oxps *.cbz *.fb2 *.mobi *.txt *.text *.log *.md *.html *.htm *.xhtml *.svg *.png *.jpg *.jpeg *.gif *.tif *.tiff *.bmp *.webp *.docx *.xlsx *.pptx *.zip)"),
             QStringLiteral("All files (*)")};
+}
+
+bool AppServices::windowIsZoomed(QObject *window) const {
+    return winWindowIsZoomed(qobject_cast<QWindow *>(window));
+}
+
+void AppServices::clearNativeWindowZoom(QObject *window) const {
+    winWindowClearNativeZoom(qobject_cast<QWindow *>(window));
+}
+
+void AppServices::unzoomWindowToGeometry(QObject *window, int x, int y, int w, int h) const {
+    winWindowUnzoomToGeometry(qobject_cast<QWindow *>(window), x, y, w, h);
+}
+
+void AppServices::syncWindowPlacement(QObject *window) const {
+    winWindowSyncNormalPlacement(qobject_cast<QWindow *>(window));
 }
 
 } // namespace papercut

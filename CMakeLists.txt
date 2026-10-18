@@ -123,11 +123,15 @@ if(WIN32)
     set(PAPERCUT_WIN_RC "${CMAKE_BINARY_DIR}/papercut.rc")
     set_source_files_properties("${PAPERCUT_WIN_RC}" PROPERTIES
         OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/assets/papercut-dark-off.ico")
+    # RC is built in a MOC-free target so windres is not passed autogen -I paths (breaks when the
+    # source tree path contains spaces).
+    add_library(papercut-winrc OBJECT "${PAPERCUT_WIN_RC}")
+    set_target_properties(papercut-winrc PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 endif()
 
 if(WIN32)
-    add_executable(papercut-launch WIN32 src/packaging/win-launch.c ${PAPERCUT_WIN_RC})
-    target_link_libraries(papercut-launch PRIVATE user32 shell32)
+    add_executable(papercut-launch WIN32 src/packaging/win-launch.c)
+    target_link_libraries(papercut-launch PRIVATE papercut-winrc user32 shell32)
 endif()
 
 add_executable(papercut-tests tests/test_core.cpp)
@@ -157,7 +161,8 @@ if(PAPERCUT_BUILD_GUI)
         src/app/SingleInstance.cpp)
     target_link_libraries(papercut-gui PUBLIC papercut-core Qt6::Quick Qt6::Qml Qt6::QuickControls2 Qt6::Network)
 
-    qt_add_executable(papercut WIN32 src/app/main.cpp src/app/WinWindowChrome.cpp ${PAPERCUT_WIN_RC})
+    qt_add_executable(papercut WIN32 src/app/main.cpp src/app/WinWindowChrome.cpp)
+    target_link_libraries(papercut PRIVATE papercut-winrc)
     qt_add_resources(papercut qml
         PREFIX /qml
         BASE qml

@@ -82,6 +82,9 @@ QJsonObject settingsObject(const ViewerSettings &s) {
     o.insert(QStringLiteral("titleBarEnabled"), s.titleBarEnabled);
     o.insert(QStringLiteral("windowPaddingV"), s.windowPaddingV);
     o.insert(QStringLiteral("windowPaddingH"), s.windowPaddingH);
+    o.insert(QStringLiteral("defaultWindowWidth"), s.defaultWindowWidth);
+    o.insert(QStringLiteral("defaultWindowHeight"), s.defaultWindowHeight);
+    o.insert(QStringLiteral("startupWindowPosition"), s.startupWindowPosition);
     o.insert(QStringLiteral("filesRoot"), s.filesRoot);
     o.insert(QStringLiteral("appIcon"), s.appIcon);
     o.insert(QStringLiteral("appFontFamily"), s.appFontFamily);
@@ -265,6 +268,12 @@ ViewerSettings BackupJson::mergeSettings(const ViewerSettings &current, const QS
     next.titleBarEnabled = boolOr(obj, current.titleBarEnabled, "titleBarEnabled");
     next.windowPaddingV = intOr(obj, current.windowPaddingV, "windowPaddingV");
     next.windowPaddingH = intOr(obj, current.windowPaddingH, "windowPaddingH");
+    next.defaultWindowWidth =
+        ViewerSettings::canonicalDefaultWindowWidth(intOr(obj, current.defaultWindowWidth, "defaultWindowWidth"));
+    next.defaultWindowHeight =
+        ViewerSettings::canonicalDefaultWindowHeight(intOr(obj, current.defaultWindowHeight, "defaultWindowHeight"));
+    next.startupWindowPosition = ViewerSettings::canonicalStartupWindowPosition(
+        stringOr(obj, current.startupWindowPosition, "startupWindowPosition"));
     if (obj.contains(QLatin1String("filesRoot")))
         next.filesRoot = obj.value(QLatin1String("filesRoot")).toString();
     next.appIcon = ViewerSettings::canonicalAppIcon(stringOr(obj, current.appIcon, "appIcon"));

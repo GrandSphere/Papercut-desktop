@@ -7,6 +7,7 @@
 #include "WinWindowChrome.h"
 #include "cli/Cli.h"
 #include "core/AppPaths.h"
+#include "data/ViewerSettings.h"
 #include "core/Keybinds.h"
 #include "pdf/DocumentFont.h"
 #include "pdf/DocumentMagic.h"
@@ -19,14 +20,18 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QCoreApplication>
+#include <QEventLoop>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QMetaObject>
+#include <QScreen>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QWindow>
 #include <QtQml>
+#include <algorithm>
 #include <cstring>
 
 #ifdef Q_OS_WIN
@@ -53,9 +58,63 @@
 #ifndef DWMWA_TEXT_COLOR
 #define DWMWA_TEXT_COLOR 36
 #endif
+#ifndef DWMWA_CLOAK
+#define DWMWA_CLOAK 13
+#endif
+#ifndef DWMWA_VISIBLE_FRAME_BORDER_THICKNESS
+#define DWMWA_VISIBLE_FRAME_BORDER_THICKNESS 37
+#endif
 #endif
 
 using namespace papercut;
+
+namespace {
+
+void applyStartupWindowGeometry(QWindow *window, const ViewerSettings &st) {
+    const int w = std::max(ViewerSettings::MIN_WINDOW_W,
+                           ViewerSettings::canonicalDefaultWindowWidth(st.defaultWindowWidth));
+    const int h = std::max(ViewerSettings::MIN_WINDOW_H,
+                           ViewerSettings::canonicalDefaultWindowHeight(st.defaultWindowHeight));
+    QScreen *screen = window->screen();
+    if (!screen) screen = QGuiApplication::primaryScreen();
+    const QRect area = screen ? screen->availableGeometry() : QRect();
+    const QString pos = ViewerSettings::canonicalStartupWindowPosition(st.startupWindowPosition);
+    int x = 0;
+    int y = 0;
+    int gw = w;
+    int gh = h;
+    if (area.isEmpty()) {
+        window->setGeometry(x, y, gw, gh);
+        return;
+    }
+    if (pos == QLatin1String("SNAP_LEFT")) {
+        gw = std::max(ViewerSettings::MIN_WINDOW_W, area.width() / 2);
+        gh = std::max(ViewerSettings::MIN_WINDOW_H, area.height());
+        x = area.x();
+        y = area.y();
+    } else if (pos == QLatin1String("SNAP_RIGHT")) {
+        gw = std::max(ViewerSettings::MIN_WINDOW_W, area.width() / 2);
+        gh = std::max(ViewerSettings::MIN_WINDOW_H, area.height());
+        x = area.x() + area.width() - gw;
+        y = area.y();
+    } else {
+        x = area.x() + std::max(0, (area.width() - w) / 2);
+        y = area.y() + std::max(0, (area.height() - h) / 2);
+        gw = w;
+        gh = h;
+    }
+    window->setGeometry(x, y, gw, gh);
+}
+
+void applyStartupWindowState(QWindow *window, const ViewerSettings &st) {
+    const QString pos = ViewerSettings::canonicalStartupWindowPosition(st.startupWindowPosition);
+    if (pos == QLatin1String("MAXIMIZED"))
+        window->showMaximized();
+    else if (pos == QLatin1String("FULLSCREEN"))
+        QMetaObject::invokeMethod(window, "beginStartupFullscreen", Qt::QueuedConnection);
+}
+
+} // namespace
 
 namespace {
 
@@ -78,7 +137,6 @@ void applyNativeTitleBar(QWindow *window, const QColor &bg, const QColor &fg) {
 #ifdef Q_OS_WIN
     const HWND hwnd = reinterpret_cast<HWND>(window->winId());
     if (!hwnd) return;
-    const BOOL dark = bg.lightnessF() < 0.55 ? TRUE : FALSE;
     static HWND lastHwnd = nullptr;
     static QRgb lastBg = 0, lastFg = 0;
     const bool unchanged = hwnd == lastHwnd && bg.rgba() == lastBg && fg.rgba() == lastFg;
@@ -86,6 +144,7 @@ void applyNativeTitleBar(QWindow *window, const QColor &bg, const QColor &fg) {
     lastBg = bg.rgba();
     lastFg = fg.rgba();
     if (unchanged) return;
+    const BOOL dark = bg.lightnessF() < 0.55 ? TRUE : FALSE;
     DwmSetWindowAttribute(hwnd, 19, &dark, sizeof(dark)); // Win10 dark mode attr 19
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
     const COLORREF caption = RGB(bg.red(), bg.green(), bg.blue());
@@ -95,7 +154,10 @@ void applyNativeTitleBar(QWindow *window, const QColor &bg, const QColor &fg) {
     DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &caption, sizeof(caption));
     const int corners = DWMWCP_ROUND;
     DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
+    const int borderThickness = 0;
+    DwmSetWindowAttribute(hwnd, DWMWA_VISIBLE_FRAME_BORDER_THICKNESS, &borderThickness, sizeof(borderThickness));
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED); // Win10 caption refresh
+    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &caption, sizeof(caption));
 #else
     Q_UNUSED(bg);
     Q_UNUSED(fg);
@@ -227,7 +289,6 @@ int main(int argc, char **argv) {
         [services](QObject *obj, const QUrl &) {
             auto *window = qobject_cast<QQuickWindow *>(obj);
             if (!window) return;
-            installWinWindowChrome(window);
             auto apply = [window, services] {
                 applyNativeTitleBar(window, services->bgColor(), services->appFontColor());
                 const QString id = ViewerSettings::canonicalAppIcon(services->settings().appIcon);
@@ -241,7 +302,32 @@ int main(int argc, char **argv) {
                 if (window->isVisible()) apply();
             });
             QObject::connect(services, &AppServices::settingsChanged, window, apply);
+            window->setColor(services->bgColor());
+            window->create();
+#ifdef Q_OS_WIN
+            HWND hwnd = reinterpret_cast<HWND>(window->winId());
+            BOOL cloak = TRUE;
+            if (hwnd)
+                DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+            installWinWindowChrome(window);
             apply();
+            window->update();
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            if (hwnd) {
+                BOOL uncloak = FALSE;
+                DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &uncloak, sizeof(uncloak));
+                apply();
+            }
+#else
+            installWinWindowChrome(window);
+            apply();
+            window->update();
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+#endif
+            const ViewerSettings startupSettings = services->settings();
+            applyStartupWindowGeometry(window, startupSettings);
+            window->show();
+            applyStartupWindowState(window, startupSettings);
         });
     engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
     return app.exec();

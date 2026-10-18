@@ -1,12 +1,13 @@
 #include "WinWindowChrome.h"
 
 #include <QAbstractNativeEventFilter>
+#include <QColor>
 #include <QGuiApplication>
-#include <QMetaObject>
 #include <QQuickItem>
 #include <QQuickWindow>
-#include <QRect>
-#include <QTimer>
+#include <QScreen>
+#include <QSize>
+#include <QWindow>
 #include <algorithm>
 #include <cmath>
 
@@ -14,6 +15,15 @@
 #include <dwmapi.h>
 #include <windows.h>
 #include <windowsx.h>
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#ifndef DWMWA_VISIBLE_FRAME_BORDER_THICKNESS
+#define DWMWA_VISIBLE_FRAME_BORDER_THICKNESS 37
+#endif
 #endif
 
 namespace papercut {
@@ -28,61 +38,68 @@ class WinChrome final : public QAbstractNativeEventFilter {
 public:
     explicit WinChrome(QQuickWindow *window) : m_window(window) {}
 
+    ~WinChrome() override = default;
+
     HWND hwnd() const { return reinterpret_cast<HWND>(m_window->winId()); }
+
+    void primeFrame() {
+        if (m_initialFrameApplied) return;
+        if (!hwnd()) return;
+        m_initialFrameApplied = true;
+        applyFrameStyle();
+    }
+
+    void onVisible() {
+        if (!m_window || !m_window->isVisible()) return;
+        onVisibilityChanged(m_window->visibility());
+    }
+
+    void onVisibilityChanged(QWindow::Visibility visibility) {
+        if (!m_window || !m_window->isVisible()) return;
+        if (!m_initialFrameApplied) {
+            m_initialFrameApplied = true;
+            applyFrameStyle();
+            m_lastVisibility = visibility;
+            return;
+        }
+        const bool wasZoomed = m_lastVisibility == QWindow::FullScreen
+                               || m_lastVisibility == QWindow::Maximized;
+        m_lastVisibility = visibility;
+        if (visibility == QWindow::FullScreen || visibility == QWindow::Maximized) return;
+        if (wasZoomed) applyFrameStyle();
+    }
 
     void applyFrameStyle() {
         if (!m_window) return;
-        if (!m_restoring && m_window->visibility() == QWindow::FullScreen) return;
+        if (m_window->visibility() == QWindow::FullScreen) return;
         const HWND h = hwnd();
         if (!h) return;
-        LONG style = GetWindowLongW(h, GWL_STYLE);
-        style &= ~(WS_POPUP | WS_MAXIMIZE);
-        style |= WS_CAPTION | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU | WS_VISIBLE;
-        SetWindowLongW(h, GWL_STYLE, style);
+        const bool zoomed = IsZoomed(h) || m_window->visibility() == QWindow::Maximized;
+        const LONG prev = GetWindowLongW(h, GWL_STYLE);
+        LONG style = prev;
+        style &= ~WS_POPUP;
+        if (!zoomed) style &= ~WS_MAXIMIZE;
+        style |= WS_CAPTION | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU;
+        if (style != prev) SetWindowLongW(h, GWL_STYLE, style);
         const MARGINS margins{0, 0, 0, 1};
         DwmExtendFrameIntoClientArea(h, &margins);
-        SetWindowPos(h, nullptr, 0, 0, 0, 0,
-                     SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-    }
-
-    void rememberWindowed() {
-        if (!m_window || m_restoring) return;
-        if (m_window->visibility() != QWindow::Windowed) return;
-        const HWND h = hwnd();
-        if (!h || IsZoomed(h) || IsIconic(h)) return;
-        if (GetWindowLongW(h, GWL_STYLE) & WS_POPUP) return;
-        const QRect g = m_window->geometry();
-        if (g.width() < 360 || g.height() < 480) return;
-        const RECT work = monitorWork(h);
-        const int workW = work.right - work.left;
-        const int workH = work.bottom - work.top;
-        if (g.width() >= workW - 8 && g.height() >= workH - 8) return;
-        m_saved = g;
-    }
-
-    void leaveMaximizedOrFullscreen() {
-        if (!m_window) return;
-        m_restoring = true;
-        m_window->setProperty("wantFullscreen", false);
-        m_window->setProperty("restoringWindowed", true);
-        QMetaObject::invokeMethod(m_window, "restoreWindowed");
-        m_window->setWindowState(Qt::WindowNoState);
-        m_window->showNormal();
-        m_window->setVisibility(QWindow::Windowed);
-        applyFrameStyle();
-        if (m_saved.isValid() && m_saved.width() >= 360 && m_saved.height() >= 480) {
-            m_window->setGeometry(m_saved);
-            const HWND h = hwnd();
-            if (h) {
-                SetWindowPos(h, nullptr, m_saved.x(), m_saved.y(), m_saved.width(), m_saved.height(),
-                             SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
-                ShowWindow(h, SW_RESTORE);
-            }
+        const QColor bg = m_window->color();
+        if (bg.isValid()) {
+            const COLORREF border = RGB(bg.red(), bg.green(), bg.blue());
+            DwmSetWindowAttribute(h, DWMWA_BORDER_COLOR, &border, sizeof(border));
+            const BOOL dark = bg.lightnessF() < 0.55f ? TRUE : FALSE;
+            DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
         }
-        QTimer::singleShot(0, m_window, [this] {
-            m_restoring = false;
-            m_window->setProperty("restoringWindowed", false);
-        });
+        if (style != prev) {
+            SetWindowPos(h, nullptr, 0, 0, 0, 0,
+                         SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        if (bg.isValid()) {
+            const COLORREF border = RGB(bg.red(), bg.green(), bg.blue());
+            DwmSetWindowAttribute(h, DWMWA_BORDER_COLOR, &border, sizeof(border));
+        }
+        const int borderThickness = 0;
+        DwmSetWindowAttribute(h, DWMWA_VISIBLE_FRAME_BORDER_THICKNESS, &borderThickness, sizeof(borderThickness));
     }
 
     bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override {
@@ -99,8 +116,12 @@ public:
         case WM_NCACTIVATE:
             *result = TRUE;
             return true;
-        case WM_NCLBUTTONDOWN:
-            return handleNcLButtonDown(msg, result);
+        case WM_EXITSIZEMOVE: {
+            const bool zoomed = winWindowIsZoomed(m_window);
+            if (!zoomed && m_window->visibility() != QWindow::Maximized)
+                winWindowSyncNormalPlacement(m_window);
+            return false;
+        }
         default:
             return false;
         }
@@ -149,7 +170,6 @@ private:
     }
 
     bool handleNcHitTest(MSG *msg, qintptr *result) {
-        // Fullscreen: skip HTCAPTION (blocks QML restore).
         if (m_window->visibility() == QWindow::FullScreen) {
             *result = HTCLIENT;
             return true;
@@ -210,12 +230,12 @@ private:
             const qreal x1 = x0 + bar->width();
             const qreal y1 = y0 + bar->height();
             if (lx >= x0 && lx < x1 && ly >= y0 && ly < y1) {
-                // Title buttons: HTCLIENT.
                 if (lx >= x1 - qreal(kCaptionButtonWidth * 3)) {
                     *result = HTCLIENT;
                     return true;
                 }
-                *result = HTCAPTION;
+                // Client hit tests so QML title bar always runs restore-under-cursor drag.
+                *result = HTCLIENT;
                 return true;
             }
         }
@@ -223,46 +243,27 @@ private:
         return true;
     }
 
-    bool handleNcLButtonDown(MSG *msg, qintptr *result) {
-        if (msg->wParam != HTCAPTION) return false;
-        const auto vis = m_window->visibility();
-        if (vis != QWindow::FullScreen && vis != QWindow::Maximized) return false;
-        QTimer::singleShot(0, m_window, [this] {
-            leaveMaximizedOrFullscreen();
-            QTimer::singleShot(48, m_window, [this] {
-                if (m_window->visibility() == QWindow::FullScreen
-                    || m_window->visibility() == QWindow::Maximized)
-                    leaveMaximizedOrFullscreen();
-                m_window->startSystemMove();
-            });
-        });
-        *result = 0;
-        return true;
-    }
-
     QQuickWindow *m_window = nullptr;
-    QRect m_saved;
-    bool m_restoring = false;
+    bool m_initialFrameApplied = false;
+    QWindow::Visibility m_lastVisibility = QWindow::Hidden;
 };
 
 } // namespace
 
 void installWinWindowChrome(QQuickWindow *window) {
     if (!window) return;
+    window->create();
     auto *chrome = new WinChrome(window);
     QGuiApplication::instance()->installNativeEventFilter(chrome);
-    QObject::connect(window, &QWindow::visibilityChanged, window, [chrome] { chrome->applyFrameStyle(); });
-    const auto remember = [chrome] { chrome->rememberWindowed(); };
-    QObject::connect(window, &QWindow::xChanged, window, remember);
-    QObject::connect(window, &QWindow::yChanged, window, remember);
-    QObject::connect(window, &QWindow::widthChanged, window, remember);
-    QObject::connect(window, &QWindow::heightChanged, window, remember);
+    chrome->primeFrame();
+    QObject::connect(window, &QWindow::visibilityChanged, window,
+                     [chrome](QWindow::Visibility visibility) { chrome->onVisibilityChanged(visibility); });
+    QObject::connect(window, &QWindow::visibleChanged, window,
+                     [chrome](bool visible) { if (visible) chrome->onVisible(); });
     QObject::connect(window, &QObject::destroyed, QGuiApplication::instance(), [chrome] {
         QGuiApplication::instance()->removeNativeEventFilter(chrome);
         delete chrome;
     });
-    chrome->applyFrameStyle();
-    chrome->rememberWindowed();
 }
 
 #else
@@ -270,4 +271,62 @@ void installWinWindowChrome(QQuickWindow *window) {
 void installWinWindowChrome(QQuickWindow *) {}
 
 #endif
+
+bool winWindowIsZoomed(QWindow *window) {
+    if (!window) return false;
+#ifdef Q_OS_WIN
+    const HWND h = reinterpret_cast<HWND>(window->winId());
+    if (h && IsZoomed(h)) return true;
+#endif
+    return window->visibility() == QWindow::Maximized;
+}
+
+void winWindowClearNativeZoom(QWindow *window) {
+    if (!window) return;
+#ifdef Q_OS_WIN
+    const HWND h = reinterpret_cast<HWND>(window->winId());
+    if (h && IsZoomed(h)) ShowWindow(h, SW_RESTORE);
+#endif
+    if (window->visibility() == QWindow::FullScreen || window->visibility() == QWindow::Maximized)
+        window->showNormal();
+    window->setVisibility(QWindow::Windowed);
+}
+
+void winWindowUnzoomToGeometry(QWindow *window, int x, int y, int w, int h) {
+    if (!window) return;
+    window->setProperty("wantFullscreen", false);
+#ifdef Q_OS_WIN
+    const HWND hwnd = reinterpret_cast<HWND>(window->winId());
+    if (hwnd) {
+        const qreal dpr = std::max(window->devicePixelRatio(), 1.0);
+        WINDOWPLACEMENT wp{sizeof(wp)};
+        GetWindowPlacement(hwnd, &wp);
+        wp.flags = 0;
+        wp.showCmd = SW_SHOWNORMAL;
+        wp.rcNormalPosition = RECT{int(std::lround(x * dpr)), int(std::lround(y * dpr)),
+                                   int(std::lround((x + w) * dpr)), int(std::lround((y + h) * dpr))};
+        SetWindowPlacement(hwnd, &wp);
+    }
+#endif
+    window->showNormal();
+    window->setVisibility(QWindow::Windowed);
+    window->setGeometry(x, y, w, h);
+    winWindowSyncNormalPlacement(window);
+}
+
+void winWindowSyncNormalPlacement(QWindow *window) {
+    if (!window) return;
+#ifdef Q_OS_WIN
+    const HWND hwnd = reinterpret_cast<HWND>(window->winId());
+    if (!hwnd || IsZoomed(hwnd) || IsIconic(hwnd)) return;
+    RECT rc{};
+    GetWindowRect(hwnd, &rc);
+    WINDOWPLACEMENT wp{sizeof(wp)};
+    GetWindowPlacement(hwnd, &wp);
+    wp.rcNormalPosition = rc;
+    if (wp.showCmd == SW_SHOWMAXIMIZED) wp.showCmd = SW_SHOWNORMAL;
+    SetWindowPlacement(hwnd, &wp);
+#endif
+}
+
 } // namespace papercut

@@ -13,6 +13,7 @@ PapercutOverlay {
     property string exportKind: "All"
     property string paddingKey: "pagePaddingDp"
     property var pendingDelete: []
+    signal settingsSaved
 
     readonly property bool startupCustom: draft.startupZoomMode === "CUSTOM"
     readonly property real startupPercent: Math.max(50, Math.min(400, draft.startupZoomPercent || 100))
@@ -29,6 +30,7 @@ PapercutOverlay {
         App.saveSettingsDraft(draft)
         draft = Object.assign({}, App.settings)
         toastFn("Saved")
+        settingsSaved()
     }
     function pick(key, title) {
         colourKey = key
@@ -53,6 +55,30 @@ PapercutOverlay {
         const n = parseFloat(s.replace(",", "."))
         if (!isFinite(n)) return 1
         return root.fontScaleValue(n)
+    }
+    function defaultWindowSizeLabel(w, h) {
+        return String(w || 1000) + "x" + String(h || 760)
+    }
+    function startupPositionLabel(id) {
+        switch (String(id || "CENTER").toUpperCase()) {
+        case "SNAP_LEFT": return "Snapped left"
+        case "SNAP_RIGHT": return "Snapped right"
+        case "MAXIMIZED": return "Maximized"
+        case "FULLSCREEN": return "Fullscreen"
+        default: return "Center"
+        }
+    }
+    function startupZoomSummary(d) {
+        if (d.rememberLastZoom) return "Last zoom"
+        const mode = d.startupZoomMode || "FIT_WIDTH"
+        if (mode === "FIT_PAGE") return "Fit"
+        if (mode === "FIT_WIDTH") return "Fit width"
+        return Math.round(Math.max(50, Math.min(400, d.startupZoomPercent || 100))) + "%"
+    }
+    function parseDefaultWindowField(text, fallback, min) {
+        const n = parseInt(String(text || "").trim(), 10)
+        if (!isFinite(n) || n < min) return fallback
+        return Math.min(n, 16384)
     }
 
     ChromeIcon { parent: root.actionHost; icon: "save"; hint: "Save"; onClicked: root.save() }
@@ -89,7 +115,28 @@ PapercutOverlay {
                         root.setMany(on ? { openFolioOnStartup: true, restoreLastPdf: false } : { openFolioOnStartup: false })
                     }
                 }
+                Rectangle { width: parent.width; height: 1; color: "#5F6368"; opacity: 0.5 }
                 SettingsSwitchRow { label: "Always dark mode"; checked: !!draft.alwaysDarkMode; onToggled: on => root.set("alwaysDarkMode", on) }
+                Rectangle { width: parent.width; height: 1; color: "#5F6368"; opacity: 0.5 }
+                SettingsTapRow {
+                    label: "Default window size"
+                    value: root.defaultWindowSizeLabel(draft.defaultWindowWidth, draft.defaultWindowHeight)
+                    onClicked: {
+                        defaultWinWField.text = String(draft.defaultWindowWidth || 1000)
+                        defaultWinHField.text = String(draft.defaultWindowHeight || 760)
+                        defaultWindowSizeDialog.open()
+                    }
+                }
+                SettingsTapRow {
+                    label: "Startup position"
+                    value: root.startupPositionLabel(draft.startupWindowPosition)
+                    onClicked: startupPositionDialog.open()
+                }
+                SettingsTapRow {
+                    label: "Zoom"
+                    value: root.startupZoomSummary(draft)
+                    onClicked: zoomStartupDialog.open()
+                }
             }
 
             CollapsibleSection {
@@ -207,37 +254,6 @@ PapercutOverlay {
             }
 
             CollapsibleSection {
-                title: "Zoom"
-                hint: "Remember last zoom, or set a startup zoom (fit, fit width, or a percentage)"
-                SettingsSwitchRow { label: "Remember last zoom"; checked: !!draft.rememberLastZoom; onToggled: on => root.set("rememberLastZoom", on) }
-                AppText { text: "Zoom on startup:"; color: App.appFontColor; opacity: draft.rememberLastZoom ? 0.35 : 0.7; font.pixelSize: Math.round(16 * App.uiScale) }
-                Row {
-                    spacing: 8
-                    Repeater {
-                        model: [{ m: "FIT_PAGE", t: "Fit" }, { m: "FIT_WIDTH", t: "Fit width" }, { m: "CUSTOM", t: "Zoom" }]
-                        delegate: FilterChip {
-                            text: modelData.t
-                            enabled: !draft.rememberLastZoom
-                            selected: (draft.startupZoomMode || "FIT_WIDTH") === modelData.m
-                            onClicked: root.set("startupZoomMode", modelData.m)
-                        }
-                    }
-                }
-                Column {
-                    visible: root.startupCustom
-                    width: parent.width
-                    spacing: 4
-                    AppText { text: Math.round(root.startupPercent) + "%"; color: App.appFontColor; font.pixelSize: Math.round(16 * App.uiScale) }
-                    ThinGreySlider {
-                        from: 50; to: 400
-                        value: root.startupPercent
-                        enabled: !draft.rememberLastZoom
-                        onMoved: v => root.setMany({ startupZoomPercent: v, startupZoomMode: "CUSTOM" })
-                    }
-                }
-            }
-
-            CollapsibleSection {
                 title: "Interaction"
                 hint: "Links, text selection, side pan, and how to open the menu"
                 SettingsSwitchRow { label: "Enable following links"; checked: !!draft.allowFollowLinks; onToggled: on => root.set("allowFollowLinks", on) }
@@ -345,6 +361,50 @@ PapercutOverlay {
         }
     }
     PapercutDialog {
+        id: defaultWindowSizeDialog
+        title: "Default window size"
+        confirmText: "OK"
+        onOpened: defaultWinWField.forceActiveFocus()
+        onAccepted: {
+            const fbW = draft.defaultWindowWidth || 1000
+            const fbH = draft.defaultWindowHeight || 760
+            root.setMany({
+                defaultWindowWidth: root.parseDefaultWindowField(defaultWinWField.text, fbW, 360),
+                defaultWindowHeight: root.parseDefaultWindowField(defaultWinHField.text, fbH, 480)
+            })
+        }
+        Row {
+            width: parent.width
+            spacing: 8
+            PapercutField {
+                id: defaultWinWField
+                width: (parent.width - parent.spacing - sizeLabel.implicitWidth) / 2
+                color: App.appFontColor
+                placeholderText: "Width"
+                validator: IntValidator { bottom: 360; top: 16384 }
+                inputMethodHints: Qt.ImhDigitsOnly
+                onAccepted: { defaultWindowSizeDialog.close(); defaultWindowSizeDialog.accepted() }
+            }
+            AppText {
+                id: sizeLabel
+                anchors.verticalCenter: parent.verticalCenter
+                text: "×"
+                color: App.appFontColor
+                opacity: 0.7
+                font.pixelSize: Math.round(18 * App.uiScale)
+            }
+            PapercutField {
+                id: defaultWinHField
+                width: defaultWinWField.width
+                color: App.appFontColor
+                placeholderText: "Height"
+                validator: IntValidator { bottom: 480; top: 16384 }
+                inputMethodHints: Qt.ImhDigitsOnly
+                onAccepted: { defaultWindowSizeDialog.close(); defaultWindowSizeDialog.accepted() }
+            }
+        }
+    }
+    PapercutDialog {
         id: scaleDialog
         title: "Font size"
         confirmText: "OK"
@@ -445,6 +505,85 @@ PapercutOverlay {
                 MouseArea {
                     anchors.fill: parent
                     onClicked: fontDialog.fontPick = modelData
+                }
+            }
+        }
+    }
+    PapercutDialog {
+        id: zoomStartupDialog
+        title: "Zoom"
+        confirmText: ""
+        dismissText: "Close"
+        SettingsSwitchRow {
+            label: "Remember last zoom"
+            checked: !!draft.rememberLastZoom
+            onToggled: on => root.set("rememberLastZoom", on)
+        }
+        AppText {
+            text: "Zoom on startup:"
+            color: App.appFontColor
+            opacity: draft.rememberLastZoom ? 0.35 : 0.7
+            font.pixelSize: Math.round(16 * App.uiScale)
+        }
+        Row {
+            spacing: 8
+            Repeater {
+                model: [{ m: "FIT_PAGE", t: "Fit" }, { m: "FIT_WIDTH", t: "Fit width" }, { m: "CUSTOM", t: "Zoom" }]
+                delegate: FilterChip {
+                    text: modelData.t
+                    enabled: !draft.rememberLastZoom
+                    selected: (draft.startupZoomMode || "FIT_WIDTH") === modelData.m
+                    onClicked: root.set("startupZoomMode", modelData.m)
+                }
+            }
+        }
+        Column {
+            visible: root.startupCustom
+            width: parent.width
+            spacing: 4
+            AppText {
+                text: Math.round(root.startupPercent) + "%"
+                color: App.appFontColor
+                font.pixelSize: Math.round(16 * App.uiScale)
+            }
+            ThinGreySlider {
+                from: 50
+                to: 400
+                value: root.startupPercent
+                enabled: !draft.rememberLastZoom
+                onMoved: v => root.setMany({ startupZoomPercent: v, startupZoomMode: "CUSTOM" })
+            }
+        }
+    }
+    PapercutDialog {
+        id: startupPositionDialog
+        title: "Startup position"
+        confirmText: ""
+        dismissText: "Close"
+        width: Math.min(640, (Overlay.overlay ? Overlay.overlay.width : 700) - 48)
+        AppText {
+            text: "Window position on startup:"
+            color: App.appFontColor
+            opacity: 0.7
+            font.pixelSize: Math.round(16 * App.uiScale)
+        }
+        Row {
+            spacing: 8
+            Repeater {
+                model: [
+                    { m: "SNAP_LEFT", t: "Snapped left" },
+                    { m: "SNAP_RIGHT", t: "Snapped right" },
+                    { m: "CENTER", t: "Center" },
+                    { m: "MAXIMIZED", t: "Maximized" },
+                    { m: "FULLSCREEN", t: "Fullscreen" }
+                ]
+                delegate: FilterChip {
+                    text: modelData.t
+                    selected: (root.draft.startupWindowPosition || "CENTER").toUpperCase() === modelData.m
+                    onClicked: {
+                        root.set("startupWindowPosition", modelData.m)
+                        startupPositionDialog.close()
+                    }
                 }
             }
         }

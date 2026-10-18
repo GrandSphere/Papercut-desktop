@@ -11,7 +11,7 @@ Rectangle {
     height: 36
     color: App.bgColor
 
-    readonly property bool maximized: window && (window.visibility === Window.Maximized || window.visibility === Window.FullScreen)
+    readonly property bool maximized: window && window.windowZoomed()
     signal maximizeRequested
 
     function toggleMax() { maximizeRequested() }
@@ -19,10 +19,13 @@ Rectangle {
     MouseArea {
         anchors { left: parent.left; right: buttons.left; top: parent.top; bottom: parent.bottom }
         acceptedButtons: Qt.LeftButton
-        onPressed: {
+        onPressed: mouse => {
             if (!root.allowMove || !window) return
-            if (typeof window.beginSystemMove === "function") window.beginSystemMove()
-            else window.startSystemMove()
+            const g = mapToGlobal(mouse.x, mouse.y)
+            if (window.windowZoomed())
+                window.beginSystemMoveFromZoomed(g.x, g.y)
+            else
+                window.startSystemMove()
         }
         onDoubleClicked: root.toggleMax()
     }

@@ -488,7 +488,9 @@ bool Keybinds::eventFilter(QObject *watched, QEvent *event) {
         if (me->button() != Qt::LeftButton) return false;
         QWindow *over = QGuiApplication::topLevelAt(me->globalPosition().toPoint());
         if (over != m_window && QGuiApplication::focusWindow() != m_window) return false;
-        if (!QMetaObject::invokeMethod(m_window, "beginSystemMove"))
+        const QPointF g = me->globalPosition();
+        if (!QMetaObject::invokeMethod(m_window, "beginSystemMoveFromZoomed", Q_ARG(QVariant, g.x()),
+                                       Q_ARG(QVariant, g.y()), Q_ARG(QVariant, true)))
             m_window->startSystemMove();
         return true;
     }
