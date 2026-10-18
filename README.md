@@ -52,8 +52,8 @@ MuPDF will be downloaded automatically on first configure unless you pass `-DUSE
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/GrandSphere/papercut-desktop.git
-   cd papercut-desktop
+   git clone https://github.com/GrandSphere/Papercut-desktop.git
+   cd Papercut-desktop
    ```
 2. Configure and build (from the repository root):
 
@@ -90,7 +90,7 @@ MuPDF will be downloaded automatically on first configure unless you pass `-DUSE
    ```
 ## Known Issues
 
-Report issues at https://github.com/GrandSphere/papercut-desktop/issues.
+Report issues at https://github.com/GrandSphere/Papercut-desktop/issues.
 
 ## Contact
 
