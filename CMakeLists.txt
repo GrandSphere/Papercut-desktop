@@ -162,7 +162,9 @@ if(PAPERCUT_BUILD_GUI)
     target_link_libraries(papercut-gui PUBLIC papercut-core Qt6::Quick Qt6::Qml Qt6::QuickControls2 Qt6::Network)
 
     qt_add_executable(papercut WIN32 src/app/main.cpp src/app/WinWindowChrome.cpp)
-    target_link_libraries(papercut PRIVATE papercut-winrc)
+    if(WIN32)
+        target_link_libraries(papercut PRIVATE papercut-winrc)
+    endif()
     qt_add_resources(papercut qml
         PREFIX /qml
         BASE qml
