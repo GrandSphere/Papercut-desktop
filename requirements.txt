@@ -1,5 +1,4 @@
-# Papercut desktop — build requirements (logical names; install via Qt installer / OS packages).
-# See README.md for platform-specific install notes.
+# Papercut desktop — build requirements
 
 cmake>=3.22
 ninja>=1.10
