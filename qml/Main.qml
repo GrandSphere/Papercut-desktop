@@ -1318,12 +1318,6 @@ ApplicationWindow {
         case "rotateAllRight":
             if (ctl.hasDocument) ctl.rotateAll(90)
             break
-        case "rotatePage":
-            if (ctl.hasDocument) ctl.rotateCurrent(90)
-            break
-        case "rotateDocument":
-            if (ctl.hasDocument) ctl.rotateAll(90)
-            break
         case "goToTop":
             if (ctl.hasDocument) ctl.goToPageIndex(0)
             break
