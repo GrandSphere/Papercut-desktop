@@ -3,11 +3,17 @@
 #include "AppServices.h"
 #include "core/AppPaths.h"
 #include "core/ErrorMessages.h"
+#include "data/JumpBookmarks.h"
 #include "pdf/PdfComposer.h"
 #include "pdf/TextFinder.h"
 
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QUrl>
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 namespace papercut {
@@ -41,14 +47,31 @@ static QVector<int> decodeRotations(const QString &json, int n) {
 }
 
 DocumentController::DocumentController(QObject *parent) : QObject(parent), m_app(AppServices::instance()) {
+    m_jumpPanTimer.setSingleShot(true);
+    m_jumpPanTimer.setInterval(80);
+    connect(&m_jumpPanTimer, &QTimer::timeout, this, &DocumentController::upsertConnectedJump);
+    m_reloadDebounce.setSingleShot(true);
+    m_reloadDebounce.setInterval(500);
+    connect(&m_reloadDebounce, &QTimer::timeout, this, [this] {
+        if (viewingSettings().reloadDocumentOnChange) reloadDocument();
+    });
+    connect(&m_fileWatch, &QFileSystemWatcher::fileChanged, this, [this](const QString &) { scheduleReloadFromDisk(); });
+    connect(&m_fileWatch, &QFileSystemWatcher::directoryChanged, this,
+            [this](const QString &) { scheduleReloadFromDisk(); });
     connect(m_app, &AppServices::settingsChanged, this, [this] {
         pushViewingToStrip();
         relayoutReflowable();
+        updateFileWatch();
     });
 }
 
 DocumentController::~DocumentController() {
     m_searchGen++;
+    m_jumpPanTimer.stop();
+    m_reloadDebounce.stop();
+    cancelAllRenders();
+    m_worker.post([this] { m_engine.close(); });
+    m_worker.drainControl();
 }
 
 void DocumentController::setStrip(PdfStripItem *strip) {
@@ -126,7 +149,12 @@ void DocumentController::setStrip(PdfStripItem *strip) {
         connect(m_strip, &PdfStripItem::doubleTapped, this, &DocumentController::menuRequested);
         connect(m_strip, &PdfStripItem::linkTapped, this, &DocumentController::followLink);
         connect(m_strip, &PdfStripItem::pageTapped, this, &DocumentController::pageTapped);
-        connect(m_strip, &PdfStripItem::folioSwiped, this, [this](int delta) { onFolioSwipe(delta); });
+        connect(m_strip, &PdfStripItem::folioSwiped, this, [this](int delta) {
+            noteNonScrollNav();
+            onFolioSwipe(delta);
+        });
+        connect(m_strip, &PdfStripItem::userPanned, this, &DocumentController::onUserPan);
+        connect(m_strip, &PdfStripItem::pageStepped, this, &DocumentController::noteNonScrollNav);
         m_strip->setFolioPaging(inFolio());
         m_strip->setSettings(viewingSettings());
         m_loadedAny = false;
@@ -225,6 +253,7 @@ void DocumentController::setDocument(const std::optional<DocState> &doc) {
         if (m_doc.uri != prevUri) {
             m_origPages = m_doc.pages;
             m_pageRotate.clear();
+            disconnectJump();
             if (m_presenting) {
                 m_presenting = false;
                 if (m_strip) m_strip->setPresentation(false);
@@ -234,10 +263,17 @@ void DocumentController::setDocument(const std::optional<DocState> &doc) {
         m_laidFamily = m_app->uiFontFamily();
         m_laidWeight = m_app->uiFontWeight();
         m_laidScale = float(m_app->fontScale());
+        const QUrl u(m_doc.uri);
+        if (u.isLocalFile()) m_openPath = QFileInfo(u.toLocalFile()).absoluteFilePath();
+        else {
+            const QFileInfo fi(m_doc.uri);
+            m_openPath = fi.exists() ? fi.absoluteFilePath() : m_doc.uri;
+        }
     } else {
         m_doc = DocState{};
         m_origPages.clear();
         m_pageRotate.clear();
+        m_openPath.clear();
         m_laidFamily.clear();
         m_laidWeight = 0;
         m_laidScale = 0.f;
@@ -248,6 +284,7 @@ void DocumentController::setDocument(const std::optional<DocState> &doc) {
         }
     }
     syncStrip();
+    updateFileWatch();
     emit documentChanged();
     emit viewingChanged();
 }
@@ -341,9 +378,11 @@ bool DocumentController::originalColors() const { return viewingSettings().origi
 
 QString DocumentController::zoomLabel() const {
     const ViewerSettings s = viewingSettings();
+    if (m_presenting) return QStringLiteral("Page");
     const ZoomMode mode = m_strip && m_strip->hasDocument() ? m_strip->zoomMode() : s.effectiveMode();
     if (mode == ZoomMode::FitWidth) return QStringLiteral("Width");
-    if (mode == ZoomMode::FitPage || m_presenting) return QStringLiteral("Page");
+    if (mode == ZoomMode::FitHeight) return QStringLiteral("Height");
+    if (mode == ZoomMode::FitPage) return QStringLiteral("Page");
     return QString::number(int(std::lround(zoomPercent()))) + QLatin1Char('%');
 }
 
@@ -394,6 +433,7 @@ void DocumentController::setCustomZoomInternal(double percent) {
 
 void DocumentController::goToPageIndex(int index, double y) {
     if (!m_strip) return;
+    noteNonScrollNav();
     m_strip->goToPage(index, y >= 0 ? std::optional<float>(float(y)) : std::nullopt);
 }
 
@@ -407,10 +447,53 @@ void DocumentController::fitWidth() {
         emit toast(QStringLiteral("Open a PDF first"));
         return;
     }
-    if (m_presenting) setPresenting(false);
+    if (m_presenting) {
+        m_presenting = false;
+        m_hadPresenterZoom = false;
+        m_strip->setPresentation(false);
+        emit presentingChanged();
+    }
+    noteNonScrollNav();
     m_strip->applyFitWidth();
     setZoomMode(ZoomMode::FitWidth);
     emit zoomChanged();
+}
+
+void DocumentController::fitHeight() {
+    if (!m_doc.valid || !m_strip) {
+        emit toast(QStringLiteral("Open a PDF first"));
+        return;
+    }
+    if (m_presenting) {
+        m_presenting = false;
+        m_hadPresenterZoom = false;
+        m_strip->setPresentation(false);
+        emit presentingChanged();
+    }
+    noteNonScrollNav();
+    m_strip->applyFitHeight();
+    setZoomMode(ZoomMode::FitHeight);
+    emit zoomChanged();
+}
+
+void DocumentController::applyZoomChoice(const QString &mode, double percent) {
+    if (!m_doc.valid || !m_strip) {
+        emit toast(QStringLiteral("Open a PDF first"));
+        return;
+    }
+    if (mode == QLatin1String("PRESENTER")) {
+        setPresenting(true);
+        return;
+    }
+    if (mode == QLatin1String("FIT_WIDTH")) {
+        fitWidth();
+        return;
+    }
+    if (mode == QLatin1String("FIT_HEIGHT")) {
+        fitHeight();
+        return;
+    }
+    setZoomPercent(percent);
 }
 
 void DocumentController::setCenterHorizontally(bool on) {
@@ -438,7 +521,13 @@ void DocumentController::setZoomPercent(double percent) {
         emit toast(QStringLiteral("Open a PDF first"));
         return;
     }
-    if (m_presenting) setPresenting(false);
+    if (m_presenting) {
+        m_presenting = false;
+        m_hadPresenterZoom = false;
+        m_strip->setPresentation(false);
+        emit presentingChanged();
+    }
+    noteNonScrollNav();
     m_strip->applyCustomZoom(float(percent));
     setCustomZoomInternal(percent);
     emit zoomChanged();
@@ -537,6 +626,7 @@ void DocumentController::rotatePages(int deltaCw, bool all) {
     }
     rebuildDisplayPages();
     reloadStripPages(true);
+    noteNonScrollNav();
     onRotationsChanged();
 }
 
@@ -547,10 +637,38 @@ void DocumentController::rotateAll(int deltaCw) { rotatePages(deltaCw, true); }
 void DocumentController::setPresenting(bool on) {
     if (!m_doc.valid) on = false;
     if (m_presenting == on) return;
+    if (on && m_strip) {
+        m_hadPresenterZoom = true;
+        m_prePresenterMode = m_strip->zoomMode();
+        m_prePresenterPercent = m_strip->currentZoomPercent();
+        noteNonScrollNav();
+    }
     m_presenting = on;
     if (m_strip) {
         m_strip->setPresentation(on);
-        if (!on) m_strip->setSettings(viewingSettings());
+        if (!on) {
+            const bool restore = m_hadPresenterZoom;
+            const ZoomMode mode = m_prePresenterMode;
+            const float percent = m_prePresenterPercent;
+            m_hadPresenterZoom = false;
+            if (restore) {
+                if (mode == ZoomMode::FitWidth) {
+                    m_strip->applyFitWidth();
+                    setZoomMode(ZoomMode::FitWidth);
+                } else if (mode == ZoomMode::FitHeight) {
+                    m_strip->applyFitHeight();
+                    setZoomMode(ZoomMode::FitHeight);
+                } else if (mode == ZoomMode::FitPage) {
+                    m_strip->applyFitPage();
+                    setZoomMode(ZoomMode::FitPage);
+                } else {
+                    m_strip->applyCustomZoom(percent);
+                    setCustomZoomInternal(percent);
+                }
+            } else {
+                m_strip->setSettings(viewingSettings());
+            }
+        }
     }
     emit presentingChanged();
     emit zoomChanged();
@@ -657,6 +775,7 @@ void DocumentController::followLink(const QString &raw, bool external) {
         const int page = dest->first;
         const std::optional<float> y = dest->second;
         postToUi([this, page, y] {
+            noteNonScrollNav();
             if (m_strip) m_strip->goToPage(page, y);
         });
     });
@@ -744,6 +863,7 @@ void DocumentController::selectHit(int index) {
     const int n = m_hits.size();
     if (n == 0) return;
     m_hitIndex = std::clamp(index, 0, n - 1);
+    noteNonScrollNav();
     applySearchToStrip();
     emit hitsChanged();
 }
@@ -752,6 +872,7 @@ void DocumentController::nextHit() {
     const int n = m_hits.size();
     if (n == 0) return;
     m_hitIndex = (m_hitIndex + 1 + n) % n;
+    noteNonScrollNav();
     applySearchToStrip();
     emit hitsChanged();
 }
@@ -760,6 +881,7 @@ void DocumentController::prevHit() {
     const int n = m_hits.size();
     if (n == 0) return;
     m_hitIndex = (m_hitIndex - 1 + n) % n;
+    noteNonScrollNav();
     applySearchToStrip();
     emit hitsChanged();
 }
@@ -821,6 +943,7 @@ void DocumentController::deleteBookmarks(const QVariantList &ids) {
     for (const QVariant &i : ids) v.append(i.toLongLong());
     m_app->bookmarks().deleteBookmarks(v);
     refreshBookmarks();
+    if (!m_connectedJump.isEmpty() && !jumpByName(m_connectedJump)) disconnectJump();
 }
 
 void DocumentController::reorderBookmarks(const QVariantList &ids) {
@@ -832,6 +955,19 @@ void DocumentController::reorderBookmarks(const QVariantList &ids) {
 
 void DocumentController::jumpBookmark(const QVariantMap &m) {
     if (!m_strip) return;
+    const QString name = m.value(QStringLiteral("name")).toString();
+    if (JumpBookmarks::isJumpName(name) && viewingSettings().quickJumpEnabled) {
+        Bookmark b;
+        b.id = m.value(QStringLiteral("id")).toLongLong();
+        b.documentUri = m.value(QStringLiteral("documentUri")).toString();
+        b.name = name;
+        b.pageIndex = m.value(QStringLiteral("pageIndex")).toInt();
+        b.scrollXPdf = m.value(QStringLiteral("scrollXPdf")).toFloat();
+        b.scrollYPdf = m.value(QStringLiteral("scrollYPdf")).toFloat();
+        goToJump(b, true);
+        return;
+    }
+    noteNonScrollNav();
     m_strip->goToPageOffset(m.value(QStringLiteral("pageIndex")).toInt(), m.value(QStringLiteral("scrollYPdf")).toFloat(),
                             m.value(QStringLiteral("scrollXPdf")).toFloat());
 }
@@ -890,9 +1026,12 @@ void DocumentController::closeDocument() {
     if (!m_doc.valid) return;
     cancelAllRenders();
     m_worker.post([this] { m_engine.close(); });
+    m_worker.drainControl();
+    disconnectJump();
     setSourceUri({});
     setDocument(std::nullopt);
     setPageLoading(false);
+    updateFileWatch();
 }
 
 // Close doc before delete (Windows lock).
@@ -1038,6 +1177,181 @@ QVariantList DocumentController::pageSizes() const {
 void DocumentController::resetOverlays() {
     search(QString());
     clearSelection();
+}
+
+void DocumentController::disconnectJump() {
+    m_connectedJump.clear();
+    m_jumpPanTimer.stop();
+}
+
+void DocumentController::noteNonScrollNav() { disconnectJump(); }
+
+void DocumentController::onUserPan() {
+    if (!viewingSettings().quickJumpEnabled || m_connectedJump.isEmpty()) return;
+    m_jumpPanTimer.start();
+}
+
+void DocumentController::upsertConnectedJump() {
+    if (m_connectedJump.isEmpty() || !m_strip || !viewingSettings().quickJumpEnabled) return;
+    const QString key = sourceKey();
+    if (key.isEmpty()) return;
+    m_app->bookmarks().upsertNamed(key, m_connectedJump, m_strip->currentPageIndex(), m_strip->currentScrollXPdf(),
+                                   m_strip->currentOffsetOnPage());
+    refreshBookmarks();
+}
+
+bool DocumentController::atJump(const Bookmark &b) const {
+    if (!m_strip) return false;
+    return b.pageIndex == m_strip->currentPageIndex() && std::abs(b.scrollXPdf - m_strip->currentScrollXPdf()) < 4.f
+           && std::abs(b.scrollYPdf - m_strip->currentOffsetOnPage()) < 4.f;
+}
+
+std::optional<Bookmark> DocumentController::jumpByName(const QString &name) const {
+    const QString key = sourceKey();
+    if (key.isEmpty()) return std::nullopt;
+    return m_app->bookmarks().findByName(key, name);
+}
+
+void DocumentController::goToJump(const Bookmark &b, bool reconnect) {
+    if (!m_strip) return;
+    m_strip->goToPageOffset(b.pageIndex, b.scrollYPdf, b.scrollXPdf);
+    const auto other = jumpByName(b.name == JumpBookmarks::kJump1 ? JumpBookmarks::kJump2 : JumpBookmarks::kJump1);
+    if (reconnect && viewingSettings().quickJumpEnabled && other)
+        m_connectedJump = b.name;
+    else
+        disconnectJump();
+}
+
+void DocumentController::performQuickJump() {
+    if (!viewingSettings().quickJumpEnabled) return;
+    if (!m_doc.valid || !m_strip) {
+        emit toast(QStringLiteral("Open a PDF first"));
+        return;
+    }
+    const QString key = sourceKey();
+    if (key.isEmpty()) return;
+    auto j1 = jumpByName(JumpBookmarks::kJump1);
+    auto j2 = jumpByName(JumpBookmarks::kJump2);
+    const int page = m_strip->currentPageIndex();
+    const float x = m_strip->currentScrollXPdf();
+    const float y = m_strip->currentOffsetOnPage();
+    if (j1) {
+        if (j2) {
+            if (atJump(*j1)) goToJump(*j2, true);
+            else goToJump(*j1, true);
+        } else {
+            m_app->bookmarks().upsertNamed(key, JumpBookmarks::kJump2, page, x, y);
+            refreshBookmarks();
+            emit toast(QStringLiteral("created Quick jump 2"));
+            goToJump(*j1, true);
+        }
+    } else {
+        m_app->bookmarks().upsertNamed(key, JumpBookmarks::kJump1, page, x, y);
+        refreshBookmarks();
+        emit toast(QStringLiteral("created Quick jump 1"));
+        if (j2) goToJump(*j2, true);
+        else disconnectJump();
+    }
+}
+
+QString DocumentController::localOpenPath() const {
+    if (!m_openPath.isEmpty()) return QFileInfo(m_openPath).absoluteFilePath();
+    if (!m_doc.valid) return {};
+    const QUrl u(m_doc.uri);
+    if (u.isLocalFile()) return QFileInfo(u.toLocalFile()).absoluteFilePath();
+    const QFileInfo fi(m_doc.uri);
+    return fi.exists() ? fi.absoluteFilePath() : QString();
+}
+
+void DocumentController::updateFileWatch() {
+    const auto watched = m_fileWatch.files() + m_fileWatch.directories();
+    if (!watched.isEmpty()) m_fileWatch.removePaths(watched);
+    if (!viewingSettings().reloadDocumentOnChange || !m_doc.valid) return;
+    const QString path = localOpenPath();
+    if (path.isEmpty() || !QFileInfo::exists(path)) return;
+    m_fileWatch.addPath(path);
+    const QString dir = QFileInfo(path).absolutePath();
+    if (!dir.isEmpty()) m_fileWatch.addPath(dir);
+}
+
+void DocumentController::scheduleReloadFromDisk() {
+    if (!viewingSettings().reloadDocumentOnChange) return;
+    if (QDateTime::currentMSecsSinceEpoch() < m_skipReloadUntil) return;
+    m_reloadDebounce.start();
+}
+
+void DocumentController::reloadDocument() {
+    if (!m_doc.valid) {
+        emit toast(QStringLiteral("Open a PDF first"));
+        return;
+    }
+    const QString path = localOpenPath();
+    if (path.isEmpty()) {
+        emit toast(QStringLiteral("Could not reload"));
+        return;
+    }
+    if (m_reloading) return;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        emit toast(QStringLiteral("Could not reload"));
+        return;
+    }
+    f.close();
+    m_reloading = true;
+    const int page = m_strip ? m_strip->currentPageIndex() : 0;
+    const float sx = m_strip ? m_strip->currentScrollXPdf() : 0.f;
+    const float sy = m_strip ? m_strip->currentOffsetOnPage() : 0.f;
+    const QVector<int> rots = m_pageRotate;
+    const bool presenting = m_presenting;
+    const ZoomMode zmode = m_strip ? m_strip->zoomMode() : ZoomMode::FitWidth;
+    const float zpct = m_strip ? m_strip->currentZoomPercent() : 100.f;
+    const float scale = float(m_app->fontScale());
+    const QString css = m_app->documentUserCss();
+    const QString uri = m_doc.uri;
+    cancelAllRenders();
+    m_worker.post([this, path, page, scale, css, uri, sx, sy, rots, presenting, zmode, zpct] {
+        QString code;
+        OpenData data;
+        try {
+            openDocumentOnEngine(path, page, scale, css);
+            data = captureOpenData();
+        } catch (const EngineError &e) {
+            code = e.code();
+        } catch (...) {
+            code = QStringLiteral("OPEN");
+        }
+        postToUi([this, code, data, uri, page, sx, sy, rots, presenting, zmode, zpct] {
+            m_reloading = false;
+            if (!code.isEmpty()) {
+                emit toast(QStringLiteral("Could not reload"));
+                return;
+            }
+            m_skipReloadUntil = QDateTime::currentMSecsSinceEpoch() + 750;
+            stashRestore(page, sx, sy, true);
+            DocState d;
+            d.valid = true;
+            d.uri = uri;
+            d.pages = data.pages;
+            d.mime = data.mime;
+            d.reflowable = data.reflowable;
+            m_loadedAny = false;
+            setDocument(d);
+            if (!rots.isEmpty()) {
+                m_pageRotate = rots;
+                if (m_pageRotate.size() < m_origPages.size())
+                    m_pageRotate.resize(m_origPages.size(), 0);
+                rebuildDisplayPages();
+                reloadStripPages(true);
+            }
+            if (m_strip) m_strip->pendingGoToPage(page, sy, sx);
+            if (presenting) setPresenting(true);
+            else if (zmode == ZoomMode::FitWidth) fitWidth();
+            else if (zmode == ZoomMode::FitHeight) fitHeight();
+            else if (zmode != ZoomMode::FitPage) setZoomPercent(zpct);
+            fillPagesAndOutline();
+            updateFileWatch();
+        });
+    });
 }
 
 } // namespace papercut

@@ -12,7 +12,11 @@ FolioController::FolioController(QObject *parent) : DocumentController(parent) {
 
 ViewerSettings FolioController::viewingSettings() const {
     ViewerSettings s = m_live ? *m_live : m_app->settings();
-    s.centerHorizontally = m_app->settings().centerHorizontally;
+    const ViewerSettings g = m_app->settings();
+    s.centerHorizontally = g.centerHorizontally;
+    s.quickJumpEnabled = g.quickJumpEnabled;
+    s.showJumpOnMenubar = g.showJumpOnMenubar;
+    s.reloadDocumentOnChange = g.reloadDocumentOnChange;
     return s;
 }
 

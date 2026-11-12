@@ -46,6 +46,7 @@ public:
     void goToPageOffset(int index, float offsetFromTop, std::optional<float> scrollX = std::nullopt);
     void pendingGoToPage(int index, float offsetFromTop, float scrollX);
     void applyFitWidth();
+    void applyFitHeight();
     void recenterX();
     void applyFitWidthForPageSelect();
     void applyFitPage();
@@ -93,6 +94,8 @@ signals:
     void folioSwiped(int delta);
     void folioPagingChanged();
     void pageSelectModeChanged();
+    void userPanned();
+    void pageStepped();
 
 protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
@@ -158,6 +161,8 @@ private:
     float screenCenterPdfY() const;
     float fitWidthPageWidth() const;
     float fitWidthUsable() const;
+    float fitHeightPageHeight() const;
+    float fitHeightUsable() const;
     float minScale() const;
     float maxScale() const;
     void rebuildTops();

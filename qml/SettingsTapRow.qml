@@ -11,16 +11,21 @@ Item {
 
     width: parent ? parent.width : 300
     height: 44
+    opacity: enabled ? 1 : 0.5
 
     AppText {
         id: labelText
         anchors { left: parent.left; verticalCenter: parent.verticalCenter }
         text: root.label
         color: App.appFontColor
-        opacity: 0.7
+        opacity: root.enabled ? 0.7 : 0.5
         font.pixelSize: Math.round(16 * App.uiScale)
     }
-    MouseArea { anchors { left: parent.left; top: parent.top; bottom: parent.bottom; right: valueText.left } onClicked: root.clicked() }
+    MouseArea {
+        enabled: root.enabled
+        anchors { left: parent.left; top: parent.top; bottom: parent.bottom; right: valueText.left }
+        onClicked: root.clicked()
+    }
     AppText {
         id: valueText
         visible: root.value.length > 0
@@ -28,7 +33,7 @@ Item {
         text: root.value
         color: App.appFontColor
         font.pixelSize: Math.round(16 * App.uiScale)
-        MouseArea { anchors.fill: parent; onClicked: root.clicked() }
+        MouseArea { enabled: root.enabled; anchors.fill: parent; onClicked: root.clicked() }
     }
     Icon {
         id: shareIcon
@@ -36,6 +41,6 @@ Item {
         anchors { right: parent.right; verticalCenter: parent.verticalCenter }
         name: "share"
         size: 18
-        MouseArea { anchors { fill: parent; margins: -8 } onClicked: root.shareClicked() }
+        MouseArea { enabled: root.enabled; anchors { fill: parent; margins: -8 } onClicked: root.shareClicked() }
     }
 }

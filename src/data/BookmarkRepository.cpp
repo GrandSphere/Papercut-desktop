@@ -1,5 +1,6 @@
 #include "BookmarkRepository.h"
 #include "DocumentPaths.h"
+#include "JumpBookmarks.h"
 
 #include <QSqlQuery>
 
@@ -139,8 +140,40 @@ int BookmarkRepository::maxSortOrder(const QString &uri) const {
     return q.next() ? q.value(0).toInt() : -1;
 }
 
+std::optional<Bookmark> BookmarkRepository::findByName(const QString &uri, const QString &name) const {
+    QSqlQuery q(db_.db());
+    q.prepare(QStringLiteral("SELECT id, documentUri, name, pageIndex, scrollXPdf, scrollYPdf, sortOrder "
+                             "FROM bookmarks WHERE documentUri = ? AND name = ? LIMIT 1"));
+    q.addBindValue(uri);
+    q.addBindValue(name);
+    q.exec();
+    if (q.next()) return markFrom(q);
+    return std::nullopt;
+}
+
+Bookmark BookmarkRepository::upsertNamed(const QString &uri, const QString &name, int pageIndex, float scrollX,
+                                         float scrollY) {
+    if (auto existing = findByName(uri, name)) {
+        existing->pageIndex = pageIndex;
+        existing->scrollXPdf = scrollX;
+        existing->scrollYPdf = scrollY;
+        updateBookmark(*existing);
+        return *existing;
+    }
+    return addBookmark(uri, name, pageIndex, scrollX, scrollY);
+}
+
 Bookmark BookmarkRepository::addBookmark(const QString &uri, const QString &name, int pageIndex,
                                          float scrollX, float scrollY) {
+    if (JumpBookmarks::isJumpName(name)) {
+        if (auto existing = findByName(uri, name)) {
+            existing->pageIndex = pageIndex;
+            existing->scrollXPdf = scrollX;
+            existing->scrollYPdf = scrollY;
+            updateBookmark(*existing);
+            return *existing;
+        }
+    }
     const int order = maxSortOrder(uri) + 1;
     QSqlQuery q(db_.db());
     q.prepare(QStringLiteral("INSERT INTO bookmarks (documentUri, name, pageIndex, scrollXPdf, scrollYPdf, sortOrder) "
@@ -156,6 +189,11 @@ Bookmark BookmarkRepository::addBookmark(const QString &uri, const QString &name
 }
 
 void BookmarkRepository::updateBookmark(const Bookmark &bookmark) {
+    if (JumpBookmarks::isJumpName(bookmark.name)) {
+        if (auto other = findByName(bookmark.documentUri, bookmark.name)) {
+            if (other->id != bookmark.id) deleteBookmarks({other->id});
+        }
+    }
     QSqlQuery q(db_.db());
     q.prepare(QStringLiteral("UPDATE bookmarks SET documentUri = ?, name = ?, pageIndex = ?, scrollXPdf = ?, "
                              "scrollYPdf = ?, sortOrder = ? WHERE id = ?"));

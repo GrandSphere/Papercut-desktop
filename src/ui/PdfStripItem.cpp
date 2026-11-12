@@ -124,6 +124,17 @@ float PdfStripItem::fitWidthUsable() const {
     return std::max(float(width()) - 2.f * m_horizontalPagePaddingPx, 1.f);
 }
 
+float PdfStripItem::fitHeightPageHeight() const {
+    if (m_pages.isEmpty()) return 1.f;
+    const int i = currentVisiblePage();
+    const float h = (i >= 0 && i < m_pages.size()) ? m_pages[i].height : m_pages[0].height;
+    return std::max(h, 1.f);
+}
+
+float PdfStripItem::fitHeightUsable() const {
+    return std::max(float(height()) - 2.f * m_pagePaddingPx, 1.f);
+}
+
 float PdfStripItem::minScale() const {
     if (width() <= 0 || m_pages.isEmpty()) return 0.1f;
     return std::min(fitWidthUsable() / m_maxWidthPdf, float(height()) / std::max(m_pages[0].height, 1.f)) * 0.5f;
@@ -405,9 +416,11 @@ void PdfStripItem::stepPage(int delta) {
     const int next = coerce(currentVisiblePage() + delta, 0, int(m_pages.size() - 1));
     if (m_presentation) {
         fitPageAt(next);
+        emit pageStepped();
         return;
     }
     goToPage(next);
+    emit pageStepped();
 }
 
 void PdfStripItem::setDocument(const QVector<PageInfo> &pages) {
@@ -664,6 +677,15 @@ void PdfStripItem::applyFitWidth() {
     update();
 }
 
+void PdfStripItem::applyFitHeight() {
+    m_userZoomed = true;
+    m_fitWidthLockHeld = false;
+    m_zoomMode = ZoomMode::FitHeight;
+    applyZoomInternal(ZoomMode::FitHeight, m_customPercent, true, true);
+    clampScroll();
+    update();
+}
+
 void PdfStripItem::recenterX() {
     if (m_pages.isEmpty() || width() <= 0) return;
     m_scrollXPdf = centerScrollX();
@@ -754,6 +776,7 @@ void PdfStripItem::applyTapZoomSnapshot(const TapZoomSnapshot &snap) {
     float nextScale = 1.f;
     switch (snap.mode) {
     case ZoomMode::FitWidth: nextScale = fitWidthUsable() / fitWidthPageWidth(); break;
+    case ZoomMode::FitHeight: nextScale = fitHeightUsable() / fitHeightPageHeight(); break;
     case ZoomMode::FitPage: {
         const int vis = currentVisiblePage();
         const PageInfo &page = (vis >= 0 && vis < m_pages.size()) ? m_pages[vis] : m_pages[0];
@@ -852,6 +875,7 @@ void PdfStripItem::applyZoomInternal(ZoomMode mode, float percent, bool keepScro
     float next = 1.f;
     switch (mode) {
     case ZoomMode::FitWidth: next = fitWidthUsable() / fitWidthPageWidth(); break;
+    case ZoomMode::FitHeight: next = fitHeightUsable() / fitHeightPageHeight(); break;
     case ZoomMode::FitPage: next = std::min(w / fitPage.width, h / std::max(fitPage.height, 1.f)); break;
     case ZoomMode::Custom: next = (dpi() / 72.f) * (percent / 100.f); break;
     }
@@ -882,6 +906,14 @@ void PdfStripItem::geometryChange(const QRectF &newGeometry, const QRectF &oldGe
     }
     if (m_zoomMode == ZoomMode::FitPage) {
         applyFitPageMode();
+        update();
+        schedulePostDraw();
+        return;
+    }
+    if (m_zoomMode == ZoomMode::FitHeight && (h != oldh || w != oldw)) {
+        applyZoomInternal(ZoomMode::FitHeight, m_customPercent, true, true);
+        clampScroll();
+        m_inFlight.clear();
         update();
         schedulePostDraw();
         return;
@@ -1364,6 +1396,7 @@ void PdfStripItem::panByPixels(qreal dx, qreal dy) {
     m_scrollYPdf += float(dy) / m_scale;
     clampScroll();
     update();
+    emit userPanned();
 }
 
 bool PdfStripItem::onScroll(const MotionEvent &, const MotionEvent &cur, float dx, float dy) {
@@ -1388,6 +1421,7 @@ bool PdfStripItem::onScroll(const MotionEvent &, const MotionEvent &cur, float d
     m_scrollYPdf += dy / m_scale;
     clampScroll();
     update();
+    emit userPanned();
     return true;
 }
 
@@ -1644,7 +1678,8 @@ void PdfStripItem::handleMotion(const MotionEvent &e) {
             if (e.count() == 1 && !m_folioSwiped) {
                 const double dx = e.pos().x() - m_folioDown.x();
                 const double dy = e.pos().y() - m_folioDown.y();
-                if (std::abs(dx) > kTouchSlop && std::abs(dx) > std::abs(dy)) {
+                const float slop = 96.f * (dpi() / 96.f);
+                if (std::abs(dx) > slop && std::abs(dx) > 2.0 * std::abs(dy)) {
                     m_folioSwiped = true;
                     emit folioSwiped(dx < 0 ? 1 : -1);
                     m_swallowUntilUp = true;
@@ -1894,6 +1929,7 @@ void PdfStripItem::wheelEvent(QWheelEvent *event) {
     m_scrollYPdf -= dy / m_scale;
     clampScroll();
     update();
+    emit userPanned();
     event->accept();
 }
 

@@ -500,7 +500,18 @@ ApplicationWindow {
         anchors.rightMargin: win.winPadH
         focus: true
         Keys.priority: Keys.BeforeItem
-        Keys.onPressed: (event) => win.handleAppKey(event)
+        Keys.onPressed: (event) => {
+            win.handleAppKey(event)
+            if (event.accepted) return
+            if (!ctl.presenting) return
+            if (event.key === Qt.Key_Down || event.key === Qt.Key_Right) {
+                ctl.stepPage(1)
+                event.accepted = true
+            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Left) {
+                ctl.stepPage(-1)
+                event.accepted = true
+            }
+        }
     }
 
     Connections {
@@ -608,7 +619,12 @@ ApplicationWindow {
         width: parent.width - win.winPadH * 2
         title: ctl.selectedPages.length + " pages"
         onBack: ctl.exitPageSelect()
-        ChromeIcon { icon: "reorder"; hint: "Rearrange"; enabled: ctl.selectedPages.length > 0; onClicked: rearrange.open() }
+            ChromeIcon {
+                icon: "rotate_right"; hint: "Rotate page"
+                enabled: ctl.hasDocument
+                onClicked: ctl.rotateCurrent(90)
+            }
+            ChromeIcon { icon: "reorder"; hint: "Rearrange"; enabled: ctl.selectedPages.length > 0; onClicked: rearrange.open() }
         ChromeIcon {
             readonly property bool all: ctl.totalPages > 0 && ctl.selectedPages.length === ctl.totalPages
             icon: all ? "check_box_outline_blank" : "select_all"
@@ -673,7 +689,7 @@ ApplicationWindow {
                 MouseArea {
                     anchors.fill: parent
                     enabled: ctl.hasDocument
-                    onClicked: { zoomField.text = String(Math.round(ctl.zoomPercent)); zoomDialog.open() }
+                    onClicked: zoomDialog.open()
                     onPressAndHold: toast.show("Zoom")
                 }
             }
@@ -729,11 +745,21 @@ ApplicationWindow {
                     onClicked: ctl.setLockZoom(!ctl.lockZoom)
                 }
                 ChromeIcon {
-                    icon: "width_full"; hint: "Fit width"; longHint: "Center horizontally"
+                    icon: "width_full"; hint: "Fit width"; longHint: "Fit height"
                     onClicked: { if (ctl.hasDocument) ctl.fitWidth() }
-                    onLongClicked: { if (ctl.hasDocument) ctl.centerHorizontally() }
+                    onLongClicked: { if (ctl.hasDocument) ctl.fitHeight() }
                 }
-                ChromeIcon { icon: "bookmark_border"; hint: "Bookmarks"; onClicked: { if (ctl.hasDocument) bookmarks.open() } }
+                ChromeIcon {
+                    icon: "bookmark_border"; hint: "Bookmarks"; longHint: App.settings.quickJumpEnabled ? "Quick jump" : ""
+                    onClicked: { if (ctl.hasDocument) bookmarks.open() }
+                    onLongClicked: { if (ctl.hasDocument && App.settings.quickJumpEnabled) ctl.performQuickJump() }
+                }
+                ChromeIcon {
+                    visible: !!App.settings.quickJumpEnabled && !!App.settings.showJumpOnMenubar
+                    icon: "swap_vert"; hint: "Quick jump"
+                    enabled: ctl.hasDocument
+                    onClicked: { if (ctl.hasDocument) ctl.performQuickJump() }
+                }
             }
             PageSlider {
                 visible: win.inFolio
@@ -940,6 +966,16 @@ ApplicationWindow {
                     onClicked: { drawer.close(); viewerCtl.addCurrentToFolio() }
                 }
                 DrawerItem { visible: !win.inFolio; label: "Combine"; onClicked: { drawer.close(); combine.open() } }
+                DrawerItem {
+                    label: "Rotate page"
+                    enabled: ctl.hasDocument
+                    onClicked: { ctl.rotateCurrent(90); drawer.close() }
+                }
+                DrawerItem {
+                    label: "Rotate document"
+                    enabled: ctl.hasDocument
+                    onClicked: { ctl.rotateAll(90); drawer.close() }
+                }
                 Rectangle { width: parent.width; height: 1; color: "#5F6368"; opacity: 0.5 }
                 DrawerItem {
                     visible: win.inFolio
@@ -991,7 +1027,7 @@ ApplicationWindow {
         }
         Rectangle { width: parent.width; height: 1; color: "#5F6368"; opacity: 0.5 }
         SettingsSwitchRow {
-            label: "Store rotation"
+            label: "Keep rotation"
             checked: win.shareStoreRotation
             onToggled: on => win.shareStoreRotation = on
         }
@@ -1000,26 +1036,62 @@ ApplicationWindow {
         id: zoomDialog
         title: "Zoom"
         confirmText: "OK"
-        onOpened: { zoomField.forceActiveFocus(); zoomField.selectAll() }
-        onAccepted: {
-            if (ctl.presenting) return
-            const v = parseFloat(zoomField.text)
-            if (!isNaN(v)) ctl.setZoomPercent(Math.max(25, Math.min(400, v)))
+        property string draftMode: "CUSTOM"
+        function syncDraftFromViewer() {
+            if (ctl.presenting) draftMode = "PRESENTER"
+            else if (ctl.zoomLabel === "Width") draftMode = "FIT_WIDTH"
+            else if (ctl.zoomLabel === "Height") draftMode = "FIT_HEIGHT"
+            else draftMode = "CUSTOM"
+            zoomField.text = String(Math.round(ctl.zoomPercent))
         }
-        PapercutField {
-            id: zoomField
+        onOpened: {
+            syncDraftFromViewer()
+            zoomField.forceActiveFocus()
+            zoomField.selectAll()
+        }
+        onAccepted: {
+            const v = parseFloat(zoomField.text)
+            const pct = isNaN(v) ? ctl.zoomPercent : Math.max(25, Math.min(400, v))
+            ctl.applyZoomChoice(draftMode, pct)
+        }
+        Row {
             width: parent.width
-            color: App.appFontColor
-            placeholderText: "%"
-            validator: IntValidator { bottom: 0; top: 9999 }
-            inputMethodHints: Qt.ImhDigitsOnly
-            onAccepted: { zoomDialog.close(); zoomDialog.accepted() }
+            spacing: 8
+            PapercutField {
+                id: zoomField
+                width: parent.width - 56
+                color: App.appFontColor
+                placeholderText: "%"
+                enabled: zoomDialog.draftMode !== "PRESENTER"
+                opacity: enabled ? 1 : 0.4
+                validator: IntValidator { bottom: 0; top: 9999 }
+                inputMethodHints: Qt.ImhDigitsOnly
+                onAccepted: { zoomDialog.close(); zoomDialog.accepted() }
+            }
+            PapercutSwitch {
+                anchors.verticalCenter: parent.verticalCenter
+                checked: zoomDialog.draftMode === "CUSTOM"
+                onToggled: {
+                    if (checked) zoomDialog.draftMode = "CUSTOM"
+                    else if (zoomDialog.draftMode === "CUSTOM") zoomDialog.draftMode = "FIT_WIDTH"
+                }
+            }
         }
         SettingsSwitchRow {
-            label: "Presentation"
-            checked: ctl.presenting
+            label: "Fit width"
+            checked: zoomDialog.draftMode === "FIT_WIDTH"
+            onToggled: on => { if (on) zoomDialog.draftMode = "FIT_WIDTH" }
+        }
+        SettingsSwitchRow {
+            label: "Fit height"
+            checked: zoomDialog.draftMode === "FIT_HEIGHT"
+            onToggled: on => { if (on) zoomDialog.draftMode = "FIT_HEIGHT" }
+        }
+        SettingsSwitchRow {
+            label: "Presenter Mode"
+            checked: zoomDialog.draftMode === "PRESENTER"
             enabled: ctl.hasDocument
-            onToggled: on => ctl.setPresenting(on)
+            onToggled: on => { if (on) zoomDialog.draftMode = "PRESENTER" }
         }
     }
     PapercutDialog {
@@ -1246,6 +1318,24 @@ ApplicationWindow {
         case "rotateAllRight":
             if (ctl.hasDocument) ctl.rotateAll(90)
             break
+        case "rotatePage":
+            if (ctl.hasDocument) ctl.rotateCurrent(90)
+            break
+        case "rotateDocument":
+            if (ctl.hasDocument) ctl.rotateAll(90)
+            break
+        case "goToTop":
+            if (ctl.hasDocument) ctl.goToPageIndex(0)
+            break
+        case "goToBottom":
+            if (ctl.hasDocument && ctl.totalPages > 0) ctl.goToPageIndex(ctl.totalPages - 1)
+            break
+        case "quickJump":
+            if (ctl.hasDocument) ctl.performQuickJump()
+            break
+        case "reloadDocument":
+            if (ctl.hasDocument) ctl.reloadDocument()
+            break
         case "find":
             if (!ctl.hasDocument) break
             win.chromeOpen = false
@@ -1340,18 +1430,6 @@ ApplicationWindow {
                     }
                 }
             }
-        }
-    }
-    Keys.onPressed: (event) => {
-        if (!pageStrip.activeFocus) win.handleAppKey(event)
-        if (event.accepted) return
-        if (!ctl.presenting || pageStrip.activeFocus) return
-        if (event.key === Qt.Key_Down || event.key === Qt.Key_Right) {
-            ctl.stepPage(1)
-            event.accepted = true
-        } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Left) {
-            ctl.stepPage(-1)
-            event.accepted = true
         }
     }
     Shortcut {

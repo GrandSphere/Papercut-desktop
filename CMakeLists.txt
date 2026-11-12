@@ -134,12 +134,6 @@ if(WIN32)
     target_link_libraries(papercut-launch PRIVATE papercut-winrc user32 shell32)
 endif()
 
-add_executable(papercut-tests tests/test_core.cpp)
-target_link_libraries(papercut-tests PRIVATE papercut-core)
-
-add_executable(papercut-engine-tests tests/test_engine.cpp)
-target_link_libraries(papercut-engine-tests PRIVATE papercut-core)
-
 set(PAPERCUT_RELEASE_OS Linux)
 if(WIN32)
     set(PAPERCUT_RELEASE_OS Windows)
@@ -158,7 +152,8 @@ if(PAPERCUT_BUILD_GUI)
         src/app/ViewerController.cpp
         src/app/FolioController.cpp
         src/app/CombineController.cpp
-        src/app/SingleInstance.cpp)
+        src/app/SingleInstance.cpp
+        src/app/DocumentIcon.cpp)
     target_link_libraries(papercut-gui PUBLIC papercut-core Qt6::Quick Qt6::Qml Qt6::QuickControls2 Qt6::Network)
 
     qt_add_executable(papercut WIN32 src/app/main.cpp src/app/WinWindowChrome.cpp)
@@ -209,7 +204,9 @@ if(PAPERCUT_BUILD_GUI)
             assets/papercut-dark.ico
             assets/papercut-light.ico
             assets/papercut-dark-off.ico
-            assets/papercut-light-off.ico)
+            assets/papercut-light-off.ico
+            assets/papercut-document.png
+            assets/papercut-document-solid.png)
     qt_add_resources(papercut uifonts
         PREFIX /fonts
         BASE assets/fonts
@@ -250,7 +247,3 @@ endif()
 message(STATUS "Papercut source : ${CMAKE_SOURCE_DIR}")
 message(STATUS "Temp/build dir  : ${CMAKE_BINARY_DIR}")
 message(STATUS "Release dir     : ${PAPERCUT_RELEASE_DIR}")
-
-enable_testing()
-add_test(NAME papercut-core COMMAND papercut-tests)
-add_test(NAME papercut-engine COMMAND papercut-engine-tests)

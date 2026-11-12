@@ -10,6 +10,7 @@
 #include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 
 namespace papercut {
@@ -63,13 +64,15 @@ void MuPdfEngine::open(const QString &path, float fontScale, int startPage, cons
 
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) throw EngineError(QStringLiteral("OPEN"));
-    const QByteArray head = f.read(1024);
+    const QByteArray bytes = f.readAll();
     f.close();
-    m_mime = DocumentMagic::pick(head, QString(), QFileInfo(path).fileName());
+    m_mime = DocumentMagic::pick(bytes.left(1024), QString(), QFileInfo(path).fileName());
 
     const QByteArray pathUtf8 = path.toUtf8();
     const QByteArray mimeUtf8 = m_mime.toUtf8();
-    const int rc = pc_open(m_engine, pathUtf8.constData(), mimeUtf8.isEmpty() ? nullptr : mimeUtf8.constData());
+    const int rc = pc_open_mem(m_engine, reinterpret_cast<const unsigned char *>(bytes.constData()),
+                               static_cast<size_t>(bytes.size()), pathUtf8.constData(),
+                               mimeUtf8.isEmpty() ? nullptr : mimeUtf8.constData());
     if (rc == PC_FAIL) throw EngineError(QStringLiteral("OPEN"));
     if (rc == PC_PASSWORD) {
         m_awaitingPassword = true;

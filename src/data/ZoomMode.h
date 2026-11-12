@@ -4,10 +4,11 @@
 
 namespace papercut {
 
-enum class ZoomMode { FitPage, FitWidth, Custom };
+enum class ZoomMode { FitPage, FitWidth, FitHeight, Custom };
 
 inline ZoomMode zoomModeFromStorage(const QString &value) {
     if (value == QLatin1String("FIT_PAGE")) return ZoomMode::FitPage;
+    if (value == QLatin1String("FIT_HEIGHT")) return ZoomMode::FitHeight;
     if (value == QLatin1String("CUSTOM")) return ZoomMode::Custom;
     return ZoomMode::FitWidth;
 }
@@ -15,6 +16,7 @@ inline ZoomMode zoomModeFromStorage(const QString &value) {
 inline QString zoomModeToStorage(ZoomMode mode) {
     switch (mode) {
     case ZoomMode::FitPage: return QStringLiteral("FIT_PAGE");
+    case ZoomMode::FitHeight: return QStringLiteral("FIT_HEIGHT");
     case ZoomMode::Custom: return QStringLiteral("CUSTOM");
     case ZoomMode::FitWidth:
     default: return QStringLiteral("FIT_WIDTH");

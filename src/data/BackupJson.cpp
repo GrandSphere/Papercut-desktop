@@ -80,6 +80,11 @@ QJsonObject settingsObject(const ViewerSettings &s) {
     o.insert(QStringLiteral("fullScreenOnMaximize"), s.fullScreenOnMaximize);
     o.insert(QStringLiteral("centerHorizontally"), s.centerHorizontally);
     o.insert(QStringLiteral("titleBarEnabled"), s.titleBarEnabled);
+    o.insert(QStringLiteral("quickJumpEnabled"), s.quickJumpEnabled);
+    o.insert(QStringLiteral("showJumpOnMenubar"), s.showJumpOnMenubar);
+    o.insert(QStringLiteral("reloadDocumentOnChange"), s.reloadDocumentOnChange);
+    o.insert(QStringLiteral("useDocumentIcon"), s.useDocumentIcon);
+    o.insert(QStringLiteral("documentIconPath"), s.documentIconPath);
     o.insert(QStringLiteral("windowPaddingV"), s.windowPaddingV);
     o.insert(QStringLiteral("windowPaddingH"), s.windowPaddingH);
     o.insert(QStringLiteral("defaultWindowWidth"), s.defaultWindowWidth);
@@ -266,6 +271,12 @@ ViewerSettings BackupJson::mergeSettings(const ViewerSettings &current, const QS
     next.fullScreenOnMaximize = boolOr(obj, current.fullScreenOnMaximize, "fullScreenOnMaximize");
     next.centerHorizontally = boolOr(obj, current.centerHorizontally, "centerHorizontally");
     next.titleBarEnabled = boolOr(obj, current.titleBarEnabled, "titleBarEnabled");
+    next.quickJumpEnabled = boolOr(obj, current.quickJumpEnabled, "quickJumpEnabled");
+    next.showJumpOnMenubar = boolOr(obj, current.showJumpOnMenubar, "showJumpOnMenubar");
+    next.reloadDocumentOnChange = boolOr(obj, current.reloadDocumentOnChange, "reloadDocumentOnChange");
+    next.useDocumentIcon = boolOr(obj, current.useDocumentIcon, "useDocumentIcon");
+    if (obj.contains(QLatin1String("documentIconPath")))
+        next.documentIconPath = obj.value(QLatin1String("documentIconPath")).toString();
     next.windowPaddingV = intOr(obj, current.windowPaddingV, "windowPaddingV");
     next.windowPaddingH = intOr(obj, current.windowPaddingH, "windowPaddingH");
     next.defaultWindowWidth =

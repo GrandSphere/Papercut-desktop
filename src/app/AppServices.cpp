@@ -1,5 +1,6 @@
 #include "AppServices.h"
 
+#include "DocumentIcon.h"
 #include "WinWindowChrome.h"
 #include "Version.h"
 #include "core/AppPaths.h"
@@ -14,6 +15,7 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QTimer>
 #include <QWindow>
 #include <QHash>
 #include <QStandardPaths>
@@ -60,6 +62,7 @@ AppServices *AppServices::create() {
     s->m_folioStore = std::make_unique<FolioStore>(AppPaths::filesRoot());
     s->m_folio = std::make_unique<FolioRepository>(s->m_db, *s->m_folioStore);
     g_instance = s;
+    QTimer::singleShot(0, s, [s] { DocumentIcon::syncAssociation(s->settings()); });
     return s;
 }
 
@@ -72,6 +75,8 @@ void AppServices::updateSettings(const std::function<ViewerSettings(ViewerSettin
     next.fontScale = ViewerSettings::canonicalFontScale(next.fontScale);
     if (next == prev) return;
     m_settings->update([&](ViewerSettings) { return next; });
+    if (prev.useDocumentIcon != next.useDocumentIcon || prev.documentIconPath != next.documentIconPath)
+        DocumentIcon::syncAssociation(next);
     if (next.appearanceEqual(prev)) return;
     emit settingsChanged();
 }
@@ -127,6 +132,19 @@ int AppServices::fontPx(int base) const {
     return std::max(1, int(std::lround(double(base) * fontScale())));
 }
 QString AppServices::defaultFilesRoot() const { return AppPaths::dataRoot(); }
+
+QUrl AppServices::documentIconPreviewUrl(const QString &customPath) const {
+    return DocumentIcon::previewUrl(customPath);
+}
+
+QString AppServices::documentIconLabel(const QString &customPath) const {
+    return DocumentIcon::displayLabel(customPath);
+}
+
+QString AppServices::importDocumentIcon(const QString &path) {
+    return DocumentIcon::importCustom(path);
+}
+
 QString AppServices::version() const { return QStringLiteral(PAPERCUT_VERSION); }
 int AppServices::versionCode() const { return PAPERCUT_VERSION_CODE; }
 QString AppServices::dataDir() const { return AppPaths::dataRoot(); }
@@ -141,12 +159,13 @@ QString AppServices::tempDir() const { return AppPaths::temp().absolutePath(); }
     X(doubleTapMenu) X(singleTapMenu) X(swipeFromBottomMenu) X(originalColors) X(twoFingerPan) X(autoDisablePan) \
     X(allowTextSelection) X(restoreLastPosition) X(alwaysDarkMode) X(folioEnabled) X(openFolioOnStartup) \
     X(folioOpenLastViewed) X(folioStoreLastPosition)     X(allowMultipleInstances) X(fullScreenOnMaximize) \
-    X(centerHorizontally) X(titleBarEnabled)
+    X(centerHorizontally) X(titleBarEnabled) X(quickJumpEnabled) X(showJumpOnMenubar) X(reloadDocumentOnChange) \
+    X(useDocumentIcon)
 #define PC_INTS(X) \
     X(pagePaddingDp) X(horizontalPagePaddingDp) X(lastPageIndex) X(windowPaddingV) X(windowPaddingH) \
     X(defaultWindowWidth) X(defaultWindowHeight) X(appFontWeight)
 #define PC_STRINGS(X) \
-    X(zoomMode) X(startupZoomMode) X(startupWindowPosition) X(filesRoot) X(appIcon) X(appFontFamily)
+    X(zoomMode) X(startupZoomMode) X(startupWindowPosition) X(filesRoot) X(appIcon) X(documentIconPath) X(appFontFamily)
 
 QVariantMap AppServices::settingsMap() const {
     const ViewerSettings s = settings();
@@ -246,6 +265,10 @@ void AppServices::saveSettingsDraft(const QVariantMap &draft) {
         b("fullScreenOnMaximize", next.fullScreenOnMaximize);
         b("centerHorizontally", next.centerHorizontally);
         b("titleBarEnabled", next.titleBarEnabled);
+        b("quickJumpEnabled", next.quickJumpEnabled);
+        b("showJumpOnMenubar", next.showJumpOnMenubar);
+        b("reloadDocumentOnChange", next.reloadDocumentOnChange);
+        b("useDocumentIcon", next.useDocumentIcon);
         i("pagePaddingDp", next.pagePaddingDp);
         i("horizontalPagePaddingDp", next.horizontalPagePaddingDp);
         i("windowPaddingV", next.windowPaddingV);
@@ -264,6 +287,7 @@ void AppServices::saveSettingsDraft(const QVariantMap &draft) {
             ViewerSettings::canonicalStartupWindowPosition(next.startupWindowPosition);
         st("appIcon", next.appIcon);
         next.appIcon = ViewerSettings::canonicalAppIcon(next.appIcon);
+        st("documentIconPath", next.documentIconPath);
         st("appFontFamily", next.appFontFamily);
         next.appFontFamily = ViewerSettings::canonicalAppFontFamily(next.appFontFamily);
         i("appFontWeight", next.appFontWeight);

@@ -73,6 +73,9 @@ public:
     Q_INVOKABLE int fontPx(int base) const;
     Q_INVOKABLE void saveSettingsDraft(const QVariantMap &draft);
     Q_INVOKABLE QString defaultFilesRoot() const;
+    Q_INVOKABLE QUrl documentIconPreviewUrl(const QString &customPath) const;
+    Q_INVOKABLE QString documentIconLabel(const QString &customPath) const;
+    Q_INVOKABLE QString importDocumentIcon(const QString &path);
     Q_INVOKABLE QVariantList documents() const;
     Q_INVOKABLE void deleteDocuments(const QVariantList &uris);
     Q_INVOKABLE void clearAllBookmarks();

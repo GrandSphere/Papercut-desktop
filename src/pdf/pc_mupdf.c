@@ -77,8 +77,17 @@ static void reflow_size(const char *path, const char *magic, float *w, float *h)
 struct pc_engine {
     fz_context *ctx;
     fz_document *doc;
+    unsigned char *file_data;
+    size_t file_len;
     char err[512];
 };
+
+static void drop_file_data(pc_engine *e) {
+    if (!e || !e->file_data) return;
+    free(e->file_data);
+    e->file_data = NULL;
+    e->file_len = 0;
+}
 
 static char *pc_strdup(const char *s) {
     size_t n;
@@ -115,9 +124,12 @@ pc_engine *pc_new(void) {
 }
 
 void pc_close(pc_engine *e) {
-    if (!e || !e->doc) return;
-    fz_drop_document(e->ctx, e->doc);
-    e->doc = NULL;
+    if (!e) return;
+    if (e->doc) {
+        fz_drop_document(e->ctx, e->doc);
+        e->doc = NULL;
+    }
+    drop_file_data(e);
 }
 
 void pc_free(pc_engine *e) {
@@ -158,6 +170,47 @@ int pc_open(pc_engine *e, const char *path, const char *magic) {
     }
     if (failed) {
         if (doc) fz_drop_document(ctx, doc);
+        return PC_FAIL;
+    }
+    e->doc = doc;
+    return needs ? PC_PASSWORD : PC_OK;
+}
+
+int pc_open_mem(pc_engine *e, const unsigned char *data, size_t len, const char *hint_path, const char *magic) {
+    fz_context *ctx = e->ctx;
+    fz_stream *stream = NULL;
+    fz_document *doc = NULL;
+    int needs = 0;
+    int failed = 0;
+    pc_close(e);
+    if (!data || len == 0) {
+        set_err(e, "empty");
+        return PC_FAIL;
+    }
+    e->file_data = (unsigned char *)malloc(len);
+    if (!e->file_data) {
+        set_err(e, "oom");
+        return PC_FAIL;
+    }
+    memcpy(e->file_data, data, len);
+    e->file_len = len;
+    fz_var(stream);
+    fz_var(doc);
+    fz_try(ctx) {
+        stream = fz_open_memory(ctx, e->file_data, e->file_len);
+        doc = fz_open_document_with_stream(ctx, open_magic(hint_path, magic), stream);
+        needs = fz_needs_password(ctx, doc);
+    }
+    fz_always(ctx) {
+        fz_drop_stream(ctx, stream);
+    }
+    fz_catch(ctx) {
+        set_err(e, fz_caught_message(ctx));
+        failed = 1;
+    }
+    if (failed) {
+        if (doc) fz_drop_document(ctx, doc);
+        drop_file_data(e);
         return PC_FAIL;
     }
     e->doc = doc;

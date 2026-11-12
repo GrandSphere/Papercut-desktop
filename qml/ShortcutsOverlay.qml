@@ -12,15 +12,15 @@ PapercutOverlay {
     property string filterText: ""
     readonly property bool capturing: Keybinds.capturing
     readonly property int bindChipWidth: Math.ceil(chipMeasure.implicitWidth) + 28
-    readonly property int labelColumnWidth: {
-        const _ = App.uiScale
+    property int labelColumnWidth: 80
+    function recomputeLabelColumnWidth() {
         const all = Keybinds.actions
         let max = 80
         for (let i = 0; i < all.length; i++) {
             labelMeasure.text = all[i].label
             max = Math.max(max, Math.ceil(labelMeasure.implicitWidth))
         }
-        return max
+        labelColumnWidth = max
     }
     // Snapshot groups on open so rebind does not reset CollapsibleSection.
     property var groupLayout: []
@@ -90,6 +90,11 @@ PapercutOverlay {
         id: labelMeasure
         visible: false
         font.pixelSize: Math.round(16 * App.uiScale)
+    }
+    Component.onCompleted: recomputeLabelColumnWidth()
+    Connections {
+        target: App
+        function onSettingsChanged() { root.recomputeLabelColumnWidth() }
     }
 
     onOverlayVisibleChanged: {

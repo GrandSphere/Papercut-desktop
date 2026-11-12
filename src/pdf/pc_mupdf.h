@@ -7,6 +7,7 @@
 extern "C" {
 #endif
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct pc_engine pc_engine;
@@ -57,6 +58,7 @@ void pc_free(pc_engine *e);
 
 /* Returns PC_OK, PC_PASSWORD, or PC_FAIL. */
 int pc_open(pc_engine *e, const char *path, const char *magic);
+int pc_open_mem(pc_engine *e, const unsigned char *data, size_t len, const char *hint_path, const char *magic);
 int pc_authenticate(pc_engine *e, const char *password);
 void pc_close(pc_engine *e);
 int pc_is_open(pc_engine *e);

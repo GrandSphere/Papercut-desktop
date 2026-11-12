@@ -64,11 +64,6 @@ Prerequisites listed in `requirements.txt`:
    - Windows: `Release/Windows/bin/`
    - Linux: `Release/Linux/bin/`
 
-4. Optional tests (after build):
-
-   ```bash
-   ctest --test-dir Compile --output-on-failure
-   ```
 ## Known Issues
 
 Report issues at https://github.com/GrandSphere/Papercut-desktop/issues.

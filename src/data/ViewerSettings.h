@@ -52,9 +52,9 @@ struct ViewerSettings {
     int actionColor = DEFAULT_ACTION;
     bool originalColors = false;
     bool twoFingerPan = false;
-    bool autoDisablePan = true;
+    bool autoDisablePan = false;
     bool allowTextSelection = true;
-    bool restoreLastPosition = true;
+    bool restoreLastPosition = false;
     bool alwaysDarkMode = false;
     float imageContrast = 1.f;
     float imageAlpha = 1.f;
@@ -66,13 +66,18 @@ struct ViewerSettings {
     float lastScrollYPdf = 0.f;
     bool folioEnabled = false;
     bool openFolioOnStartup = false;
-    bool folioOpenLastViewed = true;
-    bool folioStoreLastPosition = true;
+    bool folioOpenLastViewed = false;
+    bool folioStoreLastPosition = false;
     bool allowMultipleInstances = false;
     qint64 lastFolioItemId = 0;
     bool fullScreenOnMaximize = false;
-    bool centerHorizontally = false;
+    bool centerHorizontally = true;
     bool titleBarEnabled = true;
+    bool quickJumpEnabled = false;
+    bool showJumpOnMenubar = false;
+    bool reloadDocumentOnChange = false;
+    bool useDocumentIcon = false;
+    QString documentIconPath;
     int windowPaddingV = 0;
     int windowPaddingH = 0;
     int defaultWindowWidth = DEFAULT_WINDOW_W;
@@ -166,11 +171,14 @@ struct ViewerSettings {
                && folioStoreLastPosition == o.folioStoreLastPosition
                && allowMultipleInstances == o.allowMultipleInstances && lastFolioItemId == o.lastFolioItemId
                && fullScreenOnMaximize == o.fullScreenOnMaximize && centerHorizontally == o.centerHorizontally
-               && titleBarEnabled == o.titleBarEnabled && windowPaddingV == o.windowPaddingV
+               && titleBarEnabled == o.titleBarEnabled && quickJumpEnabled == o.quickJumpEnabled
+               && showJumpOnMenubar == o.showJumpOnMenubar && reloadDocumentOnChange == o.reloadDocumentOnChange
+               && windowPaddingV == o.windowPaddingV
                && windowPaddingH == o.windowPaddingH && defaultWindowWidth == o.defaultWindowWidth
                && defaultWindowHeight == o.defaultWindowHeight
                && startupWindowPosition == o.startupWindowPosition && filesRoot == o.filesRoot
-               && appIcon == o.appIcon
+               && appIcon == o.appIcon && useDocumentIcon == o.useDocumentIcon
+               && documentIconPath == o.documentIconPath
                && appFontFamily == o.appFontFamily && appFontWeight == o.appFontWeight;
     }
 

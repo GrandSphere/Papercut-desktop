@@ -6,9 +6,11 @@
 #include "pdf/PdfModels.h"
 #include "ui/PdfStripItem.h"
 
+#include <QFileSystemWatcher>
 #include <QList>
 #include <QObject>
 #include <QSet>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 #include <atomic>
@@ -99,6 +101,8 @@ public:
     Q_INVOKABLE void goToPageIndex(int index, double y = -1);
     Q_INVOKABLE void setScrubbing(bool on);
     Q_INVOKABLE void fitWidth();
+    Q_INVOKABLE void fitHeight();
+    Q_INVOKABLE void applyZoomChoice(const QString &mode, double percent);
     Q_INVOKABLE void setCenterHorizontally(bool on);
     Q_INVOKABLE void centerHorizontally();
     Q_INVOKABLE void setZoomPercent(double percent);
@@ -109,6 +113,8 @@ public:
     Q_INVOKABLE void stepPage(int delta);
     Q_INVOKABLE void rotateCurrent(int deltaCw);
     Q_INVOKABLE void rotateAll(int deltaCw);
+    Q_INVOKABLE void performQuickJump();
+    Q_INVOKABLE void reloadDocument();
     virtual void setOriginalColors(bool on);
     Q_INVOKABLE void toggleOriginalColors() { setOriginalColors(!originalColors()); }
     Q_INVOKABLE void refreshView();
@@ -239,6 +245,16 @@ private:
     void rotatePages(int deltaCw, bool all);
     bool hasRotation() const;
     QList<int> rotatesFor(const QList<int> &pages) const;
+    void disconnectJump();
+    void noteNonScrollNav();
+    void onUserPan();
+    void upsertConnectedJump();
+    bool atJump(const Bookmark &b) const;
+    std::optional<Bookmark> jumpByName(const QString &name) const;
+    void goToJump(const Bookmark &b, bool reconnect);
+    void updateFileWatch();
+    void scheduleReloadFromDisk();
+    QString localOpenPath() const;
 
     QString m_busy;
     bool m_pageLoading = false;
@@ -262,6 +278,16 @@ private:
     QString m_laidFamily;
     int m_laidWeight = 0;
     float m_laidScale = 0.f;
+    QString m_openPath;
+    QString m_connectedJump;
+    QTimer m_jumpPanTimer;
+    QTimer m_reloadDebounce;
+    QFileSystemWatcher m_fileWatch;
+    bool m_reloading = false;
+    qint64 m_skipReloadUntil = 0;
+    bool m_hadPresenterZoom = false;
+    ZoomMode m_prePresenterMode = ZoomMode::FitWidth;
+    float m_prePresenterPercent = 100.f;
 };
 
 } // namespace papercut

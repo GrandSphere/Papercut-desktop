@@ -73,6 +73,7 @@ PapercutOverlay {
         const mode = d.startupZoomMode || "FIT_WIDTH"
         if (mode === "FIT_PAGE") return "Fit"
         if (mode === "FIT_WIDTH") return "Fit width"
+        if (mode === "FIT_HEIGHT") return "Fit height"
         return Math.round(Math.max(50, Math.min(400, d.startupZoomPercent || 100))) + "%"
     }
     function parseDefaultWindowField(text, fallback, min) {
@@ -269,7 +270,7 @@ PapercutOverlay {
                     label: "Center horizontally"
                     checked: !!draft.centerHorizontally
                     onToggled: on => root.set("centerHorizontally", on)
-                    onLongPressed: root.toastFn("Hold Fit width to center the page")
+                    onLongPressed: root.toastFn("Keeps the page centred left to right")
                 }
             }
 
@@ -283,31 +284,66 @@ PapercutOverlay {
                 title: "Bookmarks"
                 hint: "Last reading place, manage stored bookmarks per document, or clear every bookmark"
                 SettingsSwitchRow { label: "Open last position"; checked: !!draft.restoreLastPosition; onToggled: on => root.set("restoreLastPosition", on) }
+                Rectangle { width: parent.width; height: 1; color: "#5F6368"; opacity: 0.5 }
+                SettingsSwitchRow {
+                    label: "Enable quickjump"
+                    checked: !!draft.quickJumpEnabled
+                    onToggled: on => root.set("quickJumpEnabled", on)
+                }
+                SettingsSwitchRow {
+                    label: "Show quickjump button"
+                    checked: !!draft.showJumpOnMenubar
+                    enabled: !!draft.quickJumpEnabled
+                    onToggled: on => root.set("showJumpOnMenubar", on)
+                    onLongPressed: root.toastFn("Quick jump can also be reached by holding bookmarks")
+                }
+                Rectangle { width: parent.width; height: 1; color: "#5F6368"; opacity: 0.5 }
                 SettingsTapRow { label: "Manage bookmarks"; onClicked: manageDocs.open() }
                 SettingsTapRow { label: "Clear bookmarks"; onClicked: clearDialog.open() }
             }
 
             CollapsibleSection {
                 title: "Manage"
-                hint: "Window behaviour, where Folio copies live, and stored files"
+                hint: "Window behaviour, app and document icons, and stored files"
                 SettingsSwitchRow { label: "Allow multiple instances"; checked: !!draft.allowMultipleInstances; onToggled: on => root.set("allowMultipleInstances", on) }
                 SettingsSwitchRow {
-                    label: "Full Screen on Maximize"
-                    checked: !!draft.fullScreenOnMaximize
-                    onToggled: on => root.set("fullScreenOnMaximize", on)
+                    label: "Reload document on change"
+                    checked: !!draft.reloadDocumentOnChange
+                    onToggled: on => root.set("reloadDocumentOnChange", on)
+                    onLongPressed: root.toastFn("Reload when the open file is overwritten")
                 }
+                Rectangle { width: parent.width; height: 1; color: "#5F6368"; opacity: 0.5 }
                 SettingsSwitchRow {
                     label: "Show title bar"
                     checked: draft.titleBarEnabled !== false
                     onToggled: on => root.set("titleBarEnabled", on)
                 }
+                SettingsSwitchRow {
+                    label: "Full screen on maximize"
+                    checked: !!draft.fullScreenOnMaximize
+                    onToggled: on => root.set("fullScreenOnMaximize", on)
+                }
+                Rectangle { width: parent.width; height: 1; color: "#5F6368"; opacity: 0.5 }
                 SettingsTapRow {
-                    label: "Select Icon"
+                    label: "App icon"
                     value: (draft.appIcon || "papercut-dark-off") + ".ico"
                     onClicked: iconDialog.open()
                 }
+                SettingsSwitchRow {
+                    label: "Use document icon"
+                    checked: !!draft.useDocumentIcon
+                    onToggled: on => root.set("useDocumentIcon", on)
+                    onLongPressed: root.toastFn("Show Papercut's icon on files opened with this app")
+                }
                 SettingsTapRow {
-                    label: "Store files in"
+                    label: "Document Icon"
+                    value: App.documentIconLabel(draft.documentIconPath || "")
+                    enabled: !!draft.useDocumentIcon
+                    onClicked: documentIconDialog.open()
+                }
+                Rectangle { width: parent.width; height: 1; color: "#5F6368"; opacity: 0.5 }
+                SettingsTapRow {
+                    label: "File location"
                     value: (draft.filesRoot && draft.filesRoot.length) ? draft.filesRoot : App.defaultFilesRoot()
                     onClicked: folderDialog.open()
                 }
@@ -528,7 +564,7 @@ PapercutOverlay {
         Row {
             spacing: 8
             Repeater {
-                model: [{ m: "FIT_PAGE", t: "Fit" }, { m: "FIT_WIDTH", t: "Fit width" }, { m: "CUSTOM", t: "Zoom" }]
+                model: [{ m: "FIT_PAGE", t: "Fit" }, { m: "FIT_WIDTH", t: "Fit width" }, { m: "FIT_HEIGHT", t: "Fit height" }, { m: "CUSTOM", t: "Zoom" }]
                 delegate: FilterChip {
                     text: modelData.t
                     enabled: !draft.rememberLastZoom
@@ -590,7 +626,7 @@ PapercutOverlay {
     }
     PapercutDialog {
         id: iconDialog
-        title: "Select Icon"
+        title: "App icon"
         confirmText: ""
         dismissText: "Close"
         Repeater {
@@ -627,6 +663,37 @@ PapercutOverlay {
                     }
                 }
             }
+        }
+    }
+    PapercutDialog {
+        id: documentIconDialog
+        title: "Document Icon"
+        confirmText: ""
+        dismissText: "Close"
+        Image {
+            width: 64
+            height: 64
+            source: App.documentIconPreviewUrl(root.draft.documentIconPath || "")
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            cache: false
+        }
+        SettingsTapRow {
+            label: "Choose icon"
+            onClicked: documentIconFile.open()
+        }
+        SettingsTapRow {
+            label: "Reset to default"
+            onClicked: root.set("documentIconPath", "")
+        }
+    }
+    FileDialog {
+        id: documentIconFile
+        nameFilters: ["Images (*.png *.ico *.jpg *.jpeg *.bmp *.webp)", "All files (*)"]
+        onAccepted: {
+            const stored = App.importDocumentIcon(App.localPath(selectedFile))
+            if (stored && stored.length) root.set("documentIconPath", stored)
+            else root.toastFn("Could not read icon")
         }
     }
     PapercutDialog {
